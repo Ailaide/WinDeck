@@ -178,9 +178,9 @@ int main() {
         return 1;
     }
 
-    // Hide Neptune from other apps via HidHide (non-fatal if not installed)
-    windeck::hidhide::HidHideClient hidhide;
-    hidhide.hide_neptune();
+    // HidHide disabled for now — will be re-enabled when UI is available
+    // to manage it properly. Auto-install + hide without reliable restore
+    // causes lockout if the app crashes or exits abnormally.
 
     // Load config and apply profile
     windeck::config::Config config;
