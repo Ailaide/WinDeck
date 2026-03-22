@@ -1,10 +1,14 @@
 #pragma once
 
 #include "neptune/neptune_report.h"
+#include "neptune/neptune_device.h"
 #include "config/profile.h"
 #include "mapper/button_mapper.h"
 #include "mapper/stick_mapper.h"
 #include "mapper/trigger_mapper.h"
+#include "mapper/dpad_mapper.h"
+#include "mapper/touchpad_mapper.h"
+#include "mapper/gyro_mapper.h"
 #include "output/synthetic_input.h"
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -19,20 +23,27 @@ struct MapResult {
 
 class Mapper {
 public:
-    // Apply a profile configuration to all sub-mappers.
+    void set_device(windeck::neptune::NeptuneDevice* device);
     void apply_profile(const config::Profile& profile);
 
-    // Transform Neptune input into Xbox 360 report + system events.
-    // Also emits keyboard/mouse actions via synth.
     MapResult map(const neptune::InputReport& input,
                   windeck::output::SyntheticInput& synth);
 
+    // Tick inertia for touchpads (call every frame).
+    void tick(windeck::output::SyntheticInput& synth);
+
+    void release_all(windeck::output::SyntheticInput& synth);
+
 private:
-    ButtonMapper  button_mapper_;
-    StickMapper   left_stick_;
-    StickMapper   right_stick_;
-    TriggerMapper left_trigger_;
-    TriggerMapper right_trigger_;
+    ButtonMapper   button_mapper_;
+    StickMapper    left_stick_;
+    StickMapper    right_stick_;
+    TriggerMapper  left_trigger_;
+    TriggerMapper  right_trigger_;
+    DpadMapper     dpad_;
+    TouchpadMapper left_touchpad_;
+    TouchpadMapper right_touchpad_;
+    GyroMapper     gyro_;
 };
 
 } // namespace windeck::mapper

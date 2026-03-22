@@ -59,6 +59,8 @@ private:
     uint8_t haptic_side_ = 0;  // 0=right, 1=left
 
     void click_haptic();
+    void emit_action(const config::ButtonAction& action, bool pressed,
+                      windeck::output::SyntheticInput& synth);
 };
 
 } // namespace windeck::mapper

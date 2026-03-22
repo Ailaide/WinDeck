@@ -31,6 +31,12 @@ add_executable(windeck
     src/driver/driver_manager.cpp
     src/config/config.cpp
     src/hidhide/hidhide_client.cpp
+    src/mapper/dpad_mapper.cpp
+    src/mapper/touchpad_mapper.cpp
+    src/mapper/gyro_mapper.cpp
+    src/modes/directional_mode.cpp
+    src/modes/mouse_mode.cpp
+    src/modes/inertia.cpp
 )
 
 target_include_directories(windeck PRIVATE src)

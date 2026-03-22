@@ -176,21 +176,30 @@ void NeptuneDevice::disable_lizard_mode() {
 void NeptuneDevice::enable_lizard_mode() {
     if (!device_) return;
 
-    // Restore default digital mappings (re-enables keyboard/mouse emulation).
-    // Follows Linux hid-steam.c steam_set_lizard_mode(true):
-    //   steam_send_report_byte(steam, ID_SET_DEFAULT_DIGITAL_MAPPINGS);
-    //   steam_send_report_byte(steam, ID_LOAD_DEFAULT_SETTINGS);
+    // Step 1: Restore default digital mappings
     uint8_t cmd1[65] = {};
-    cmd1[0] = 0x00;  // report ID
+    cmd1[0] = 0x00;
     cmd1[1] = 0x85;  // ID_SET_DEFAULT_DIGITAL_MAPPINGS
-    send_feature_report(cmd1, sizeof(cmd1));
+    bool ok1 = send_feature_report(cmd1, sizeof(cmd1));
 
+    // Step 2: Load default settings (resets trackpad modes, etc.)
     uint8_t cmd2[65] = {};
     cmd2[0] = 0x00;
     cmd2[1] = 0x8E;  // ID_LOAD_DEFAULT_SETTINGS
-    send_feature_report(cmd2, sizeof(cmd2));
+    bool ok2 = send_feature_report_with_ack(cmd2, sizeof(cmd2));
 
-    spdlog::info("Lizard mode re-enabled (default mappings + settings restored)");
+    // Step 3: Explicitly re-enable watchdog (LOAD_DEFAULT_SETTINGS may not reset it)
+    uint8_t cmd3[65] = {};
+    cmd3[0] = 0x00;
+    cmd3[1] = kReportIdSetSettings;  // 0x87
+    cmd3[2] = 3;                     // 1 setting × 3 bytes
+    cmd3[3] = kSettingSteamWatchdogEnable;
+    cmd3[4] = 1;                     // enable
+    cmd3[5] = 0;
+    bool ok3 = send_feature_report_with_ack(cmd3, sizeof(cmd3));
+
+    spdlog::info("Lizard mode restore: mappings={} defaults={} watchdog={}", ok1, ok2, ok3);
+    spdlog::default_logger()->flush();
 }
 
 void NeptuneDevice::send_haptic(uint8_t side, uint16_t amplitude,

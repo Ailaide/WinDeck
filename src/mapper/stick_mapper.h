@@ -1,29 +1,31 @@
 #pragma once
 
 #include "config/profile.h"
+#include "modes/directional_mode.h"
+#include "modes/mouse_mode.h"
+#include "output/synthetic_input.h"
 #include <cstdint>
 
 namespace windeck::mapper {
 
-// Maps Neptune stick axes to Xbox stick axes with dead zone and response curve.
 class StickMapper {
 public:
-    void set_deadzone(float inner, float outer) {
-        inner_ = inner;
-        outer_ = outer;
-    }
-
-    void set_response_curve(config::ResponseCurve curve) {
-        curve_ = curve;
-    }
+    void apply_config(const config::StickConfig& cfg);
 
     void map(int16_t raw_x, int16_t raw_y,
-             int16_t& out_x, int16_t& out_y) const;
+             int16_t& out_x, int16_t& out_y,
+             windeck::output::SyntheticInput& synth);
+
+    void release_all(windeck::output::SyntheticInput& synth);
 
 private:
+    config::StickMode mode_ = config::StickMode::Stick;
     float inner_ = 0.05f;
     float outer_ = 0.95f;
     config::ResponseCurve curve_ = config::ResponseCurve::Linear;
+
+    modes::DirectionalMode directional_;
+    modes::MouseMode mouse_;
 };
 
 } // namespace windeck::mapper

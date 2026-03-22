@@ -20,6 +20,7 @@
 #include <filesystem>
 
 static std::atomic<bool> g_running{true};
+static windeck::neptune::NeptuneDevice* g_neptune = nullptr; // For emergency restore
 
 static void signal_handler(int /*sig*/) {
     g_running.store(false, std::memory_order_relaxed);
@@ -29,9 +30,17 @@ static BOOL WINAPI console_handler(DWORD event) {
     switch (event) {
         case CTRL_C_EVENT:
         case CTRL_BREAK_EVENT:
+            g_running.store(false, std::memory_order_relaxed);
+            Sleep(3000);
+            return TRUE;
         case CTRL_CLOSE_EVENT:
         case CTRL_LOGOFF_EVENT:
         case CTRL_SHUTDOWN_EVENT:
+            // On console close/logoff/shutdown, Windows may kill the process
+            // before normal cleanup runs. Restore lizard mode immediately.
+            if (g_neptune) {
+                g_neptune->close(); // Calls enable_lizard_mode() internally
+            }
             g_running.store(false, std::memory_order_relaxed);
             Sleep(3000);
             return TRUE;
@@ -73,6 +82,7 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
 
             // Map and send to virtual Xbox + keyboard/mouse
             auto result = mapper.map(input, synth);
+            mapper.tick(synth);  // Tick inertia every frame, not just on timeout
             xbox.update(result.xbox_report);
             synth.flush();
 
@@ -98,7 +108,9 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                 toggle_on_screen_keyboard();
             }
         } else if (read_result == 0) {
-            // Timeout
+            // Timeout — tick inertia
+            mapper.tick(synth);
+            synth.flush();
         } else {
             error_count++;
             if (error_count == 1) {
@@ -120,6 +132,7 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
         }
     }
 
+    mapper.release_all(synth);
     synth.release_all();
     spdlog::info("Input loop stopped");
 }
@@ -177,6 +190,7 @@ int main() {
         spdlog::error("Cannot proceed without Neptune controller");
         return 1;
     }
+    g_neptune = &neptune;
 
     // HidHide disabled for now — will be re-enabled when UI is available
     // to manage it properly. Auto-install + hide without reliable restore
@@ -186,6 +200,8 @@ int main() {
     windeck::config::Config config;
     windeck::mapper::Mapper mapper;
     windeck::output::SyntheticInput synth;
+
+    mapper.set_device(&neptune);
 
     // Try loading saved profile, fall back to defaults
     if (!config.load_profile("Default")) {
@@ -211,11 +227,14 @@ int main() {
     }
 
     spdlog::info("Shutting down...");
+    spdlog::default_logger()->flush();
 
     input_thread.join();
     xbox.disconnect();
-    neptune.close();
+    g_neptune = nullptr;
+    neptune.close();  // Safe to call even if already closed by console_handler
 
     spdlog::info("WinDeck stopped");
+    spdlog::default_logger()->flush();
     return 0;
 }

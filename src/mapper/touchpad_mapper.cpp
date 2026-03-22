@@ -1,5 +1,4 @@
 #include "mapper/touchpad_mapper.h"
-#include <spdlog/spdlog.h>
 #include <cmath>
 
 namespace windeck::mapper {
@@ -9,8 +8,13 @@ void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
     pressure_threshold_ = cfg.pressure_threshold;
     click_action_ = cfg.click_action;
     mouse_.set_sensitivity(cfg.sensitivity);
-    inertia_.set_friction(cfg.friction);
-    inertia_.set_cutoff(0.5f);
+    // Friction is configured as "feel" value (0.95 = gentle).
+    // Convert to per-frame at 250Hz: pow(feel, 1) is too fast,
+    // so we remap to a higher value for smooth decay.
+    // 0.95 feel → 0.998 per frame → ~1.2s decay at 250Hz
+    float per_frame_friction = 1.0f - (1.0f - cfg.friction) * 0.04f;
+    inertia_.set_friction(per_frame_friction);
+    inertia_.set_cutoff(0.1f);
 
     switch (mode_) {
         case config::TouchpadMode::Wasd:   directional_.set_keys_wasd(); break;
@@ -23,62 +27,52 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                               bool touching, windeck::output::SyntheticInput& synth) {
     if (mode_ == config::TouchpadMode::Disabled) return;
 
-
-    // Handle click with hysteresis (pressure jitters significantly).
-    // Press at threshold, release at threshold/2.
-    bool click_pressed;
-    if (click_held_) {
-        click_pressed = touching && (pressure >= pressure_threshold_ / 2);
-    } else {
-        click_pressed = touching && (pressure >= pressure_threshold_);
-    }
+    // --- Click with hysteresis (pressure jitters) ---
     if (mode_ == config::TouchpadMode::TrackpadInertia ||
         mode_ == config::TouchpadMode::Mouse) {
-        if (click_pressed && !click_held_) {
-            if (click_action_.type == config::ActionType::MouseButton)
-                synth.mouse_press(static_cast<uint8_t>(click_action_.code));
-            else if (click_action_.type == config::ActionType::Keyboard)
-                synth.key_press(click_action_.code);
+        bool click_now;
+        if (click_held_) {
+            click_now = touching && (pressure >= pressure_threshold_ * 2 / 3);
+        } else {
+            click_now = touching && (pressure >= pressure_threshold_);
+        }
+
+        if (click_now && !click_held_) {
+            emit_action(click_action_, true, synth);
             click_haptic();
-        } else if (!click_pressed && click_held_) {
-            if (click_action_.type == config::ActionType::MouseButton)
-                synth.mouse_release(static_cast<uint8_t>(click_action_.code));
-            else if (click_action_.type == config::ActionType::Keyboard)
-                synth.key_release(click_action_.code);
+        } else if (!click_now && click_held_) {
+            emit_action(click_action_, false, synth);
             click_haptic();
         }
-        click_held_ = click_pressed;
+        click_held_ = click_now;
     }
 
+    // --- Touch tracking ---
     if (touching) {
         inertia_.stop();
 
-        // Diagnostic (first 30 frames per pad)
-        static int diag_l = 0, diag_r = 0;
-        int& diag = (name_[0] == 'R') ? diag_r : diag_l;
-        if (diag < 30) {
-            spdlog::info("{}: x={} y={} press={} was={} mode={}",
-                name_, pad_x, pad_y, pressure, was_touching_, static_cast<int>(mode_));
-            diag++;
-        }
-
         if (was_touching_) {
-            // Calculate delta from previous position
-            float dx = static_cast<float>(pad_x - prev_x_) * 0.01f; // Scale to reasonable mouse units
-            float dy = static_cast<float>(pad_y - prev_y_) * -0.01f; // Invert Y for screen coords
+            float dx = static_cast<float>(pad_x - prev_x_);
+            float dy = static_cast<float>(pad_y - prev_y_);
 
-            vel_x_ = dx;
-            vel_y_ = dy;
+            // Track velocity for inertia (50/50 smoothing)
+            vel_x_ = vel_x_ * 0.5f + dx * 0.5f;
+            vel_y_ = vel_y_ * 0.5f + dy * 0.5f;
+
+            // Scale: touchpad range ~65536, a full swipe should move ~screen width
+            // ~0.04 gives comfortable speed at default sensitivity 1.0
+            constexpr float kTouchScale = 0.0097f;
+            float scaled_dx = dx * kTouchScale;
+            float scaled_dy = -dy * kTouchScale; // Invert Y: pad up = cursor up (negative screen Y)
 
             switch (mode_) {
                 case config::TouchpadMode::TrackpadInertia:
                 case config::TouchpadMode::Mouse:
-                    mouse_.update_delta(dx, dy, synth);
+                    mouse_.update_delta(scaled_dx, scaled_dy, synth);
                     break;
 
                 case config::TouchpadMode::Wasd:
                 case config::TouchpadMode::Arrows: {
-                    // Use absolute position as analog direction
                     float fx = static_cast<float>(pad_x) / 32767.0f;
                     float fy = static_cast<float>(pad_y) / 32767.0f;
                     directional_.update_analog(fx, fy, 0.2f, synth);
@@ -86,12 +80,7 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                 }
 
                 case config::TouchpadMode::Scroll:
-                    synth.mouse_scroll(static_cast<int>(dy * 10.0f));
-                    break;
-
-                case config::TouchpadMode::DpadButtons:
-                    // Map touchpad quadrants to D-Pad
-                    // Handled by ButtonMapper via touchpad click actions
+                    synth.mouse_scroll(static_cast<int>(scaled_dy * 3.0f));
                     break;
 
                 default:
@@ -104,10 +93,17 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
         was_touching_ = true;
     } else {
         if (was_touching_) {
-            // Finger just lifted
+            // Finger just lifted — start inertia only if moving fast enough
             if (mode_ == config::TouchpadMode::TrackpadInertia) {
-                inertia_.set_velocity(vel_x_, vel_y_);
-                inertia_.begin();
+                constexpr float kTouchScale = 0.0097f;
+                float ivx = vel_x_ * kTouchScale;
+                float ivy = -vel_y_ * kTouchScale;
+                float speed = std::sqrt(ivx * ivx + ivy * ivy);
+                constexpr float kMinInertiaSpeed = 3.0f; // Minimum pixels/frame to trigger inertia
+                if (speed >= kMinInertiaSpeed) {
+                    inertia_.set_velocity(ivx, ivy);
+                    inertia_.begin();
+                }
             }
 
             if (mode_ == config::TouchpadMode::Wasd ||
@@ -135,17 +131,27 @@ void TouchpadMapper::release_all(windeck::output::SyntheticInput& synth) {
     directional_.release_all(synth);
     inertia_.stop();
     if (click_held_) {
-        if (click_action_.type == config::ActionType::MouseButton)
-            synth.mouse_release(static_cast<uint8_t>(click_action_.code));
-        else if (click_action_.type == config::ActionType::Keyboard)
-            synth.key_release(click_action_.code);
+        emit_action(click_action_, false, synth);
         click_held_ = false;
+    }
+}
+
+void TouchpadMapper::emit_action(const config::ButtonAction& action, bool pressed,
+                                   windeck::output::SyntheticInput& synth) {
+    switch (action.type) {
+        case config::ActionType::MouseButton:
+            synth.mouse_set(static_cast<uint8_t>(action.code), pressed);
+            break;
+        case config::ActionType::Keyboard:
+            synth.key_set(action.code, pressed);
+            break;
+        default:
+            break;
     }
 }
 
 void TouchpadMapper::click_haptic() {
     if (!haptic_device_) return;
-    // Short tick: low amplitude, short duration
     haptic_device_->send_haptic(haptic_side_, 5000, 2000, 1);
 }
 
