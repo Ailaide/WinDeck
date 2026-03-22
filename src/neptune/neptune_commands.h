@@ -21,7 +21,9 @@ constexpr uint8_t kReportIdSetSettings = 0x87;
 constexpr uint8_t kReportIdClearSettings = 0x85;
 constexpr uint8_t kReportIdGetSettings = 0x89;
 constexpr uint8_t kReportIdResetDevice = 0x95;
-constexpr uint8_t kReportIdSetRumble   = 0x8F;
+constexpr uint8_t kReportIdHapticPulse = 0x8F;
+constexpr uint8_t kReportIdHapticCmd   = 0xEA;
+constexpr uint8_t kReportIdRumbleCmd   = 0xEB;
 
 // Feature reports for Neptune controller.
 // On Windows hidapi, byte 0 = HID report ID.
@@ -34,11 +36,13 @@ struct ClearMappingsReport_v1 {
     uint8_t data_len = 0x00;
     uint8_t padding[62] = {};
 };
+static_assert(sizeof(ClearMappingsReport_v1) == 65, "Must be 65 bytes");
 
 struct ClearMappingsReport_v2 {
     uint8_t report_id = kReportIdClearMappings;  // 0x81 as report ID
     uint8_t padding[64] = {};
 };
+static_assert(sizeof(ClearMappingsReport_v2) == 65, "Must be 65 bytes");
 
 // Setting IDs from Linux hid-steam.c
 constexpr uint8_t kSettingLeftTrackpadMode           = 7;
@@ -78,6 +82,7 @@ struct DisableLizardSettings_v1 {
     uint8_t s5_val_hi = 0xFF;
     uint8_t padding[47] = {};
 };
+static_assert(sizeof(DisableLizardSettings_v1) == 65, "Must be 65 bytes");
 
 struct DisableLizardSettings_v2 {
     uint8_t report_id = kReportIdSetSettings;    // 0x87 as report ID
@@ -99,17 +104,61 @@ struct DisableLizardSettings_v2 {
     uint8_t s5_val_hi = 0xFF;
     uint8_t padding[48] = {};
 };
+static_assert(sizeof(DisableLizardSettings_v2) == 65, "Must be 65 bytes");
 
-// Haptic feedback command
+#pragma pack(push, 1)
+
+// Haptic pulse command (single pulses, 0x8F)
 struct HapticReport {
     uint8_t report_id = 0x00;
-    uint8_t command = kReportIdSetRumble;  // 0x8F
+    uint8_t command = kReportIdHapticPulse;  // 0x8F
     uint8_t data_len = 0x07;
     uint8_t side;       // 0 = right, 1 = left
     uint16_t amplitude;
     uint16_t period;
     uint16_t count;
-    uint8_t padding[54] = {};
+    uint8_t padding[55] = {};  // total = 10 + 55 = 65 bytes
 };
+static_assert(sizeof(HapticReport) == 65, "HapticReport must be 65 bytes");
+
+// Trigger haptic command (0xEA) — advanced control with frequency and duration.
+// Matches SDL's MsgTriggerHaptic struct.
+struct TriggerHapticReport {
+    uint8_t report_id = 0x00;
+    uint8_t command = kReportIdHapticCmd;   // 0xEA
+    uint8_t data_len = 0x11;               // 17 bytes payload
+    uint8_t side;               // 0x01=L, 0x02=R, 0x03=Both
+    uint8_t cmd;                // 0=off, 1=tick, 2=click, 3=tone, 4=rumble
+    uint8_t ui_intensity = 0;   // 0-4, 0=default
+    int8_t  db_gain;            // dB gain
+    uint16_t freq;              // frequency in Hz
+    int16_t dur_ms;             // duration in ms (-1 = infinite)
+    uint16_t noise_intensity = 0;
+    uint16_t lfo_freq = 0;
+    uint8_t lfo_depth = 0;
+    uint8_t rand_tone_gain = 0;
+    uint8_t script_id = 0;
+    uint16_t lss_start_freq = 0;
+    uint16_t lss_end_freq = 0;
+    uint8_t padding[43] = {};
+};
+static_assert(sizeof(TriggerHapticReport) == 65, "TriggerHapticReport must be 65 bytes");
+
+// Simple rumble command (0xEB) — matches SDL's MsgSimpleRumbleCmd.
+struct RumbleReport {
+    uint8_t report_id = 0x00;
+    uint8_t command = kReportIdRumbleCmd;  // 0xEB
+    uint8_t data_len = 0x09;
+    uint8_t rumble_type = 0;
+    uint16_t intensity = 0;   // 0 = HAPTIC_INTENSITY_SYSTEM
+    uint16_t left_speed;      // 0-65535
+    uint16_t right_speed;     // 0-65535
+    int8_t left_gain = 2;
+    int8_t right_gain = 0;
+    uint8_t padding[53] = {};
+};
+static_assert(sizeof(RumbleReport) == 65, "RumbleReport must be 65 bytes");
+
+#pragma pack(pop)
 
 } // namespace windeck::neptune

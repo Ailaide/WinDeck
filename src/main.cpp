@@ -77,6 +77,19 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
             auto result = mapper.map(input);
             xbox.update(result.xbox_report);
 
+            // Rumble passthrough: 0xEB simple rumble (matches SDL).
+            // Neptune firmware: left=high freq, right=low freq (opposite of Xbox).
+            static uint8_t rumble_tick = 0;
+            if (++rumble_tick >= 8) {  // Every ~32ms
+                rumble_tick = 0;
+                auto rumble = xbox.get_rumble();
+                // Xbox: left=large(low freq), right=small(high freq)
+                // Neptune 0xEB: left=high freq, right=low freq → swap
+                uint16_t left  = static_cast<uint16_t>(rumble.right_motor) * 257; // Xbox small → Neptune left (high)
+                uint16_t right = static_cast<uint16_t>(rumble.left_motor) * 257;  // Xbox large → Neptune right (low)
+                device.send_rumble(left, right);
+            }
+
             // Handle system buttons (rare events, logging is fine)
             if (result.sys_events.steam_pressed) {
                 spdlog::info("Steam button pressed");
@@ -86,9 +99,7 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
             }
 
             // Log only button changes (no string formatting in hot path when idle)
-            bool btn_changed = (input.buttons != last_btn) || (input.buttons_ext != last_btn_ext);
-            if (btn_changed) {
-                spdlog::debug("btn={:#010x} ext={:#010x}", input.buttons, input.buttons_ext);
+            if (input.buttons != last_btn || input.buttons_ext != last_btn_ext) {
                 last_btn = input.buttons;
                 last_btn_ext = input.buttons_ext;
             }
@@ -136,8 +147,8 @@ static void setup_logging() {
 
         auto logger = std::make_shared<spdlog::logger>("windeck",
             spdlog::sinks_init_list{console_sink, file_sink});
-        logger->set_level(spdlog::level::debug);
-        logger->flush_on(spdlog::level::debug);
+        logger->set_level(spdlog::level::info);
+        logger->flush_on(spdlog::level::warn);
 
         spdlog::set_default_logger(logger);
     } catch (const std::exception& e) {

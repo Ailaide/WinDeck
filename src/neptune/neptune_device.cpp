@@ -207,12 +207,48 @@ void NeptuneDevice::send_haptic(uint8_t side, uint16_t amplitude,
     cmd.period = period;
     cmd.count = count;
 
-    int res = hid_send_feature_report(device_,
+    hid_send_feature_report(device_,
         reinterpret_cast<const uint8_t*>(&cmd), sizeof(cmd));
+}
 
-    if (res < 0) {
-        spdlog::trace("Failed to send haptic feedback");
-    }
+void NeptuneDevice::send_rumble(uint16_t left_speed, uint16_t right_speed) {
+    if (!device_) return;
+
+    RumbleReport cmd;
+    cmd.left_speed = left_speed;
+    cmd.right_speed = right_speed;
+
+    hid_send_feature_report(device_,
+        reinterpret_cast<const uint8_t*>(&cmd), sizeof(cmd));
+}
+
+void NeptuneDevice::send_haptic_cmd(uint8_t side, uint16_t freq,
+                                      int16_t dur_ms, int8_t gain_db) {
+    if (!device_) return;
+
+    TriggerHapticReport cmd;
+    cmd.side = side;
+    cmd.cmd = 4;       // rumble mode
+    cmd.db_gain = gain_db;
+    cmd.freq = freq;
+    cmd.dur_ms = dur_ms;
+
+    hid_send_feature_report(device_,
+        reinterpret_cast<const uint8_t*>(&cmd), sizeof(cmd));
+}
+
+void NeptuneDevice::stop_haptics() {
+    if (!device_) return;
+
+    TriggerHapticReport cmd;
+    cmd.side = 3;      // both
+    cmd.cmd = 0;       // off
+    cmd.db_gain = 0;
+    cmd.freq = 0;
+    cmd.dur_ms = 0;
+
+    hid_send_feature_report(device_,
+        reinterpret_cast<const uint8_t*>(&cmd), sizeof(cmd));
 }
 
 } // namespace windeck::neptune

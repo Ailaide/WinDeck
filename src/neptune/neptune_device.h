@@ -25,9 +25,18 @@ public:
     // Returns: 1 = new report read, 0 = timeout (no data), -1 = error
     int read(InputReport& report);
 
-    // Send haptic feedback to the controller.
-    // side: 0 = right, 1 = left
+    // Send single haptic pulse. side: 0 = right, 1 = left
     void send_haptic(uint8_t side, uint16_t amplitude, uint16_t period, uint16_t count);
+
+    // Send continuous rumble (matching SDL's ID_TRIGGER_RUMBLE_CMD).
+    void send_rumble(uint16_t left_speed, uint16_t right_speed);
+
+    // Send advanced haptic command (0xEA) with direct frequency/duration control.
+    // side: 1=left, 2=right, 3=both. freq: Hz. dur_ms: -1=infinite. gain_db: volume.
+    void send_haptic_cmd(uint8_t side, uint16_t freq, int16_t dur_ms, int8_t gain_db);
+
+    // Stop all haptics.
+    void stop_haptics();
 
     // Returns true if the device is currently open.
     bool is_open() const { return device_ != nullptr; }
