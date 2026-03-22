@@ -227,19 +227,16 @@ void NeptuneDevice::send_rumble(uint16_t left_speed, uint16_t right_speed) {
         reinterpret_cast<const uint8_t*>(&cmd), sizeof(cmd));
 }
 
-void NeptuneDevice::send_haptic_cmd(uint8_t side, uint16_t freq,
-                                      int16_t dur_ms, int8_t gain_db) {
+void NeptuneDevice::send_haptic_cmd(uint8_t side, uint8_t haptic_cmd, int8_t gain_db) {
     if (!device_) return;
 
-    TriggerHapticReport cmd;
-    cmd.side = side;
-    cmd.cmd = 4;       // rumble mode
-    cmd.db_gain = gain_db;
-    cmd.freq = freq;
-    cmd.dur_ms = dur_ms;
+    TriggerHapticReport report;
+    report.side = side;
+    report.cmd = haptic_cmd;
+    report.db_gain = gain_db;
 
     hid_send_feature_report(device_,
-        reinterpret_cast<const uint8_t*>(&cmd), sizeof(cmd));
+        reinterpret_cast<const uint8_t*>(&report), sizeof(report));
 }
 
 void NeptuneDevice::stop_haptics() {

@@ -154,7 +154,7 @@ struct Profile {
 
         // Right touchpad: trackpad with inertia, LMB click at ~half max pressure (~1000)
         right_touchpad.mode = TouchpadMode::TrackpadInertia;
-        right_touchpad.pressure_threshold = 4096;
+        right_touchpad.pressure_threshold = 6144;
         right_touchpad.click_action = {ActionType::MouseButton, 0};
 
         // Left touchpad: scroll

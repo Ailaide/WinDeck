@@ -44,9 +44,13 @@ private:
     int16_t prev_x_ = 0;
     int16_t prev_y_ = 0;
 
-    // Velocity tracking for inertia (last N deltas)
+    // Velocity tracking for inertia
     float vel_x_ = 0.0f;
     float vel_y_ = 0.0f;
+
+    // Inertia confidence accumulator (0..1). Increments when speed > threshold,
+    // decrements when speed < threshold. Inertia only fires if > 0.5 at lift-off.
+    float inertia_confidence_ = 0.0f;
 
     // Click state
     bool click_held_ = false;

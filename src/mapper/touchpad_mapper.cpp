@@ -48,6 +48,10 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
     }
 
     // --- Touch tracking ---
+    constexpr float kTouchScale = 0.0065f;
+    constexpr float kMinInertiaSpeed = 3.0f;
+    constexpr float kConfidenceStep = 0.1f; // ~10 frames to go from 0 to 1
+
     if (touching) {
         inertia_.stop();
 
@@ -59,9 +63,16 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
             vel_x_ = vel_x_ * 0.5f + dx * 0.5f;
             vel_y_ = vel_y_ * 0.5f + dy * 0.5f;
 
-            // Scale: touchpad range ~65536, a full swipe should move ~screen width
-            // ~0.04 gives comfortable speed at default sensitivity 1.0
-            constexpr float kTouchScale = 0.0097f;
+            // Update inertia confidence accumulator
+            float cur_speed = std::sqrt(vel_x_ * vel_x_ + vel_y_ * vel_y_) * kTouchScale;
+            if (cur_speed >= kMinInertiaSpeed) {
+                inertia_confidence_ += kConfidenceStep;
+                if (inertia_confidence_ > 1.0f) inertia_confidence_ = 1.0f;
+            } else {
+                inertia_confidence_ -= kConfidenceStep;
+                if (inertia_confidence_ < 0.0f) inertia_confidence_ = 0.0f;
+            }
+
             float scaled_dx = dx * kTouchScale;
             float scaled_dy = -dy * kTouchScale; // Invert Y: pad up = cursor up (negative screen Y)
 
@@ -93,17 +104,14 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
         was_touching_ = true;
     } else {
         if (was_touching_) {
-            // Finger just lifted — start inertia only if moving fast enough
+            // Finger just lifted — start inertia only if confidence > 0.5
             if (mode_ == config::TouchpadMode::TrackpadInertia) {
-                constexpr float kTouchScale = 0.0097f;
-                float ivx = vel_x_ * kTouchScale;
-                float ivy = -vel_y_ * kTouchScale;
-                float speed = std::sqrt(ivx * ivx + ivy * ivy);
-                constexpr float kMinInertiaSpeed = 3.0f; // Minimum pixels/frame to trigger inertia
-                if (speed >= kMinInertiaSpeed) {
-                    inertia_.set_velocity(ivx, ivy);
+                if (inertia_confidence_ > 0.5f) {
+                    constexpr float kScale = 0.0097f;
+                    inertia_.set_velocity(vel_x_ * kScale, -vel_y_ * kScale);
                     inertia_.begin();
                 }
+                inertia_confidence_ = 0.0f;
             }
 
             if (mode_ == config::TouchpadMode::Wasd ||
@@ -115,6 +123,7 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
         was_touching_ = false;
         vel_x_ = 0.0f;
         vel_y_ = 0.0f;
+        inertia_confidence_ = 0.0f;
     }
 }
 
@@ -152,7 +161,9 @@ void TouchpadMapper::emit_action(const config::ButtonAction& action, bool presse
 
 void TouchpadMapper::click_haptic() {
     if (!haptic_device_) return;
-    haptic_device_->send_haptic(haptic_side_, 5000, 2000, 1);
+    // 0xEA cmd=2 (click), side: 1=left 2=right, gain=4dB for stronger feel
+    uint8_t side = (haptic_side_ == 0) ? 2 : 1;
+    haptic_device_->send_haptic_cmd(side, 2, 0);
 }
 
 } // namespace windeck::mapper

@@ -31,9 +31,9 @@ public:
     // Send continuous rumble (matching SDL's ID_TRIGGER_RUMBLE_CMD).
     void send_rumble(uint16_t left_speed, uint16_t right_speed);
 
-    // Send advanced haptic command (0xEA) with direct frequency/duration control.
-    // side: 1=left, 2=right, 3=both. freq: Hz. dur_ms: -1=infinite. gain_db: volume.
-    void send_haptic_cmd(uint8_t side, uint16_t freq, int16_t dur_ms, int8_t gain_db);
+    // Send advanced haptic command (0xEA).
+    // side: 1=left, 2=right, 3=both. cmd: 0=off,1=tick,2=click,3=tone,4=rumble.
+    void send_haptic_cmd(uint8_t side, uint8_t cmd, int8_t gain_db);
 
     // Stop all haptics.
     void stop_haptics();
