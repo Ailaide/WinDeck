@@ -1,0 +1,3 @@
+[submodule "extern/ViGEmClient"]
+	path = extern/ViGEmClient
+	url = https://github.com/nefarius/ViGEmClient.git
