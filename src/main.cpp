@@ -4,7 +4,10 @@
 
 #include "neptune/neptune_device.h"
 #include "output/virtual_xbox.h"
+#include "output/synthetic_input.h"
 #include "mapper/mapper.h"
+#include "config/config.h"
+#include "hidhide/hidhide_client.h"
 #include "driver/driver_manager.h"
 
 #include <spdlog/spdlog.h>
@@ -22,7 +25,6 @@ static void signal_handler(int /*sig*/) {
     g_running.store(false, std::memory_order_relaxed);
 }
 
-// Handle Windows console events (close button, logoff, shutdown)
 static BOOL WINAPI console_handler(DWORD event) {
     switch (event) {
         case CTRL_C_EVENT:
@@ -31,38 +33,35 @@ static BOOL WINAPI console_handler(DWORD event) {
         case CTRL_LOGOFF_EVENT:
         case CTRL_SHUTDOWN_EVENT:
             g_running.store(false, std::memory_order_relaxed);
-            // Give the main thread time to clean up
             Sleep(3000);
             return TRUE;
     }
     return FALSE;
 }
 
-// Launch Windows on-screen keyboard (TabTip)
-static void launch_on_screen_keyboard() {
-    spdlog::info("Launching on-screen keyboard");
-    ShellExecuteW(nullptr, L"open", L"osk.exe", nullptr, nullptr, SW_SHOWNORMAL);
+static void toggle_on_screen_keyboard() {
+    // Find existing osk.exe window
+    HWND hwnd = FindWindowW(L"OSKMainClass", nullptr);
+    if (hwnd) {
+        // Already running — close it
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    } else {
+        // Not running — launch it
+        ShellExecuteW(nullptr, L"open", L"osk.exe", nullptr, nullptr, SW_SHOWNORMAL);
+    }
 }
 
 static void input_loop(windeck::neptune::NeptuneDevice& device,
                         windeck::output::VirtualXbox& xbox,
-                        windeck::mapper::Mapper& mapper) {
-    // Elevate thread priority for minimal input latency
+                        windeck::mapper::Mapper& mapper,
+                        windeck::output::SyntheticInput& synth) {
 #ifdef _WIN32
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 #endif
 
     windeck::neptune::InputReport input{};
     uint64_t error_count = 0;
-    uint64_t report_count = 0;
-    constexpr int kMaxConsecutiveErrors = 50; // ~200ms of errors before reconnect
-
-    // Track previous state for change-based logging (no allocations)
-    uint32_t last_btn = 0, last_btn_ext = 0;
-
-    auto reset_tracking = [&]() {
-        last_btn = 0; last_btn_ext = 0;
-    };
+    constexpr int kMaxConsecutiveErrors = 50;
 
     spdlog::info("Input loop started");
 
@@ -71,40 +70,35 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
 
         if (read_result > 0) {
             error_count = 0;
-            report_count++;
 
-            // Map and send to virtual Xbox — this is the hot path, zero allocations
-            auto result = mapper.map(input);
+            // Map and send to virtual Xbox + keyboard/mouse
+            auto result = mapper.map(input, synth);
             xbox.update(result.xbox_report);
+            synth.flush();
 
-            // Rumble passthrough: 0xEB simple rumble (matches SDL).
-            // Neptune firmware: left=high freq, right=low freq (opposite of Xbox).
+            // Rumble passthrough (throttled)
             static uint8_t rumble_tick = 0;
-            if (++rumble_tick >= 8) {  // Every ~32ms
+            if (++rumble_tick >= 8) {
                 rumble_tick = 0;
                 auto rumble = xbox.get_rumble();
-                // Xbox: left=large(low freq), right=small(high freq)
-                // Neptune 0xEB: left=high freq, right=low freq → swap
-                uint16_t left  = static_cast<uint16_t>(rumble.right_motor) * 257; // Xbox small → Neptune left (high)
-                uint16_t right = static_cast<uint16_t>(rumble.left_motor) * 257;  // Xbox large → Neptune right (low)
+                uint16_t left  = static_cast<uint16_t>(rumble.right_motor) * 257;
+                uint16_t right = static_cast<uint16_t>(rumble.left_motor) * 257;
                 device.send_rumble(left, right);
             }
 
-            // Handle system buttons (rare events, logging is fine)
+            // System buttons
             if (result.sys_events.steam_pressed) {
-                spdlog::info("Steam button pressed");
+                HWND console = GetConsoleWindow();
+                if (console) {
+                    ShowWindow(console, SW_RESTORE);
+                    SetForegroundWindow(console);
+                }
             }
             if (result.sys_events.quick_access_pressed) {
-                launch_on_screen_keyboard();
-            }
-
-            // Log only button changes (no string formatting in hot path when idle)
-            if (input.buttons != last_btn || input.buttons_ext != last_btn_ext) {
-                last_btn = input.buttons;
-                last_btn_ext = input.buttons_ext;
+                toggle_on_screen_keyboard();
             }
         } else if (read_result == 0) {
-            // Timeout — normal, no new data
+            // Timeout
         } else {
             error_count++;
             if (error_count == 1) {
@@ -117,7 +111,6 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                 if (device.open()) {
                     spdlog::info("Neptune controller reconnected");
                     error_count = 0;
-                    reset_tracking();
                 } else {
                     spdlog::error("Reconnect failed, retrying in 3 seconds...");
                     std::this_thread::sleep_for(std::chrono::seconds(3));
@@ -127,10 +120,10 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
         }
     }
 
+    synth.release_all();
     spdlog::info("Input loop stopped");
 }
 
-// Get directory where the exe is located
 static std::filesystem::path get_exe_dir() {
     wchar_t path[MAX_PATH];
     GetModuleFileNameW(nullptr, path, MAX_PATH);
@@ -152,7 +145,6 @@ static void setup_logging() {
 
         spdlog::set_default_logger(logger);
     } catch (const std::exception& e) {
-        // Fallback to console only
         spdlog::set_level(spdlog::level::debug);
         spdlog::warn("Failed to create log file: {}", e.what());
     }
@@ -160,13 +152,13 @@ static void setup_logging() {
 
 int main() {
     setup_logging();
-    spdlog::info("WinDeck v0.1.0 starting");
+    spdlog::info("WinDeck v0.2.0 starting");
 
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
     SetConsoleCtrlHandler(console_handler, TRUE);
 
-    // Ensure ViGEmBus driver is installed (auto-download and install if missing)
+    // Ensure ViGEmBus driver is installed
     if (!windeck::driver::ensure_vigembus_installed()) {
         spdlog::error("Cannot proceed without ViGEmBus driver");
         return 1;
@@ -175,29 +167,45 @@ int main() {
     // Connect virtual Xbox 360 controller
     windeck::output::VirtualXbox xbox;
     if (!xbox.connect()) {
-        spdlog::error("Failed to connect to ViGEmBus despite driver being present");
+        spdlog::error("Failed to connect to ViGEmBus");
         return 1;
     }
 
-    // Open Neptune controller (after driver setup to avoid handle invalidation)
+    // Open Neptune controller
     windeck::neptune::NeptuneDevice neptune;
     if (!neptune.open()) {
         spdlog::error("Cannot proceed without Neptune controller");
         return 1;
     }
 
-    // Create mapper (MVP: hardcoded 1:1 mapping)
-    windeck::mapper::Mapper mapper;
+    // Hide Neptune from other apps via HidHide (non-fatal if not installed)
+    windeck::hidhide::HidHideClient hidhide;
+    hidhide.hide_neptune();
 
-    // Run input loop on a dedicated thread
+    // Load config and apply profile
+    windeck::config::Config config;
+    windeck::mapper::Mapper mapper;
+    windeck::output::SyntheticInput synth;
+
+    // Try loading saved profile, fall back to defaults
+    if (!config.load_profile("Default")) {
+        spdlog::info("No saved profile, using defaults");
+        config.save_profile();  // Save default profile for future editing
+    }
+    auto profile = config.get_profile();
+    mapper.apply_profile(profile);
+    spdlog::info("Profile '{}' applied", profile.name);
+
+    // Run input loop
     std::thread input_thread(input_loop,
                               std::ref(neptune),
                               std::ref(xbox),
-                              std::ref(mapper));
+                              std::ref(mapper),
+                              std::ref(synth));
 
     spdlog::info("WinDeck running. Press Ctrl+C to stop.");
 
-    // Main thread: wait for shutdown signal
+    // Main thread: wait for shutdown
     while (g_running.load(std::memory_order_relaxed)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }

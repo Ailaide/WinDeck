@@ -1,0 +1,59 @@
+{
+  "name": "BackPaddles_ABXY",
+  "buttons": {
+    "A": { "type": "xbox", "code": 4096 },
+    "B": { "type": "xbox", "code": 8192 },
+    "X": { "type": "xbox", "code": 16384 },
+    "Y": { "type": "xbox", "code": 32768 },
+    "LB": { "type": "xbox", "code": 256 },
+    "RB": { "type": "xbox", "code": 512 },
+    "Start": { "type": "xbox", "code": 16 },
+    "Back": { "type": "xbox", "code": 32 },
+    "LS": { "type": "xbox", "code": 64 },
+    "RS": { "type": "xbox", "code": 128 },
+    "L4": { "type": "xbox", "code": 16384 },
+    "L5": { "type": "xbox", "code": 32768 },
+    "R4": { "type": "xbox", "code": 4096 },
+    "R5": { "type": "xbox", "code": 8192 },
+    "LPadClick": { "type": "none", "code": 0 },
+    "RPadClick": { "type": "none", "code": 0 }
+  },
+  "left_stick": {
+    "mode": "stick",
+    "inner_deadzone": 0.05,
+    "outer_deadzone": 0.95,
+    "curve": "linear",
+    "mouse_sensitivity": 1.0,
+    "overlap": 0.0
+  },
+  "right_stick": {
+    "mode": "stick",
+    "inner_deadzone": 0.05,
+    "outer_deadzone": 0.95,
+    "curve": "linear",
+    "mouse_sensitivity": 1.0,
+    "overlap": 0.0
+  },
+  "left_trigger": { "threshold": 0.02 },
+  "right_trigger": { "threshold": 0.02 },
+  "dpad": { "mode": "dpad" },
+  "left_touchpad": {
+    "mode": "trackpad_inertia",
+    "pressure_threshold": 50,
+    "sensitivity": 1.0,
+    "friction": 0.95,
+    "click_action": { "type": "mouse", "code": 0 }
+  },
+  "right_touchpad": {
+    "mode": "trackpad_inertia",
+    "pressure_threshold": 50,
+    "sensitivity": 1.0,
+    "friction": 0.95,
+    "click_action": { "type": "mouse", "code": 0 }
+  },
+  "gyro": {
+    "mode": "off",
+    "sensitivity_x": 1.0,
+    "sensitivity_y": 1.0
+  }
+}

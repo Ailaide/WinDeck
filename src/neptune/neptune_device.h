@@ -41,9 +41,6 @@ public:
     // Returns true if the device is currently open.
     bool is_open() const { return device_ != nullptr; }
 
-    // Send the heartbeat to keep lizard mode disabled.
-    void send_heartbeat();
-
 private:
     // Disable lizard mode (keyboard/mouse emulation) so we get raw gamepad input.
     void disable_lizard_mode();

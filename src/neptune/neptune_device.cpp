@@ -193,10 +193,6 @@ void NeptuneDevice::enable_lizard_mode() {
     spdlog::info("Lizard mode re-enabled (default mappings + settings restored)");
 }
 
-void NeptuneDevice::send_heartbeat() {
-    // With watchdog properly disabled via SET_SETTINGS, heartbeat is not needed.
-}
-
 void NeptuneDevice::send_haptic(uint8_t side, uint16_t amplitude,
                                  uint16_t period, uint16_t count) {
     if (!device_) return;

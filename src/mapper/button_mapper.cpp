@@ -1,7 +1,6 @@
 #include "mapper/button_mapper.h"
 #include "neptune/neptune_report.h"
 
-// Xbox 360 button constants from XUSB_REPORT
 #ifndef XUSB_GAMEPAD_DPAD_UP
 #define XUSB_GAMEPAD_DPAD_UP        0x0001
 #define XUSB_GAMEPAD_DPAD_DOWN      0x0002
@@ -23,9 +22,18 @@
 namespace windeck::mapper {
 
 using namespace windeck::neptune;
+using config::ActionType;
+using config::ButtonId;
+
+void ButtonMapper::set_config(
+    const std::array<config::ButtonAction, static_cast<size_t>(ButtonId::Count)>& actions) {
+    actions_ = actions;
+    configured_ = true;
+}
 
 USHORT ButtonMapper::map(uint32_t nb, uint32_t nb_ext,
-                          SystemButtonEvents& sys_events) {
+                          SystemButtonEvents& sys_events,
+                          windeck::output::SyntheticInput& synth) {
     USHORT xb = 0;
 
     // --- System buttons: intercept, do NOT pass to Xbox ---
@@ -37,34 +45,53 @@ USHORT ButtonMapper::map(uint32_t nb, uint32_t nb_ext,
     sys_events.steam_pressed        = (rising_btn & btn::kSteam) != 0;
     sys_events.quick_access_pressed = (rising_ext & btn_ext::kQuickAccess) != 0;
 
-    // --- Face buttons ---
-    if (nb & btn::kA)           xb |= XUSB_GAMEPAD_A;
-    if (nb & btn::kB)           xb |= XUSB_GAMEPAD_B;
-    if (nb & btn::kX)           xb |= XUSB_GAMEPAD_X;
-    if (nb & btn::kY)           xb |= XUSB_GAMEPAD_Y;
+    // --- D-Pad: always direct to Xbox (not remappable yet) ---
+    if (nb & btn::kDpadUp)    xb |= XUSB_GAMEPAD_DPAD_UP;
+    if (nb & btn::kDpadDown)  xb |= XUSB_GAMEPAD_DPAD_DOWN;
+    if (nb & btn::kDpadLeft)  xb |= XUSB_GAMEPAD_DPAD_LEFT;
+    if (nb & btn::kDpadRight) xb |= XUSB_GAMEPAD_DPAD_RIGHT;
 
-    // --- Shoulder buttons ---
-    if (nb & btn::kLShoulder)   xb |= XUSB_GAMEPAD_LEFT_SHOULDER;
-    if (nb & btn::kRShoulder)   xb |= XUSB_GAMEPAD_RIGHT_SHOULDER;
+    // --- Remappable buttons ---
+    if (!configured_) {
+        // Fallback: hardcoded 1:1 Xbox mapping (pre-config)
+        if (nb & btn::kA)           xb |= XUSB_GAMEPAD_A;
+        if (nb & btn::kB)           xb |= XUSB_GAMEPAD_B;
+        if (nb & btn::kX)           xb |= XUSB_GAMEPAD_X;
+        if (nb & btn::kY)           xb |= XUSB_GAMEPAD_Y;
+        if (nb & btn::kLShoulder)   xb |= XUSB_GAMEPAD_LEFT_SHOULDER;
+        if (nb & btn::kRShoulder)   xb |= XUSB_GAMEPAD_RIGHT_SHOULDER;
+        if (nb & btn::kOptions)     xb |= XUSB_GAMEPAD_START;
+        if (nb & btn::kMenu)        xb |= XUSB_GAMEPAD_BACK;
+        if (nb & btn::kLStickClick) xb |= XUSB_GAMEPAD_LEFT_THUMB;
+        if (nb & btn::kRStickClick) xb |= XUSB_GAMEPAD_RIGHT_THUMB;
+        return xb;
+    }
 
-    // --- Menu buttons ---
-    if (nb & btn::kOptions)     xb |= XUSB_GAMEPAD_START;
-    if (nb & btn::kMenu)        xb |= XUSB_GAMEPAD_BACK;
+    // Process each remappable button through the profile
+    for (size_t i = 0; i < static_cast<size_t>(ButtonId::Count); i++) {
+        const auto& nmap = kNeptuneMap[i];
+        bool pressed = false;
+        if (nmap.btn_mask)  pressed |= (nb & nmap.btn_mask) != 0;
+        if (nmap.ext_mask)  pressed |= (nb_ext & nmap.ext_mask) != 0;
 
-    // --- Stick clicks ---
-    if (nb & btn::kLStickClick) xb |= XUSB_GAMEPAD_LEFT_THUMB;
-    if (nb & btn::kRStickClick) xb |= XUSB_GAMEPAD_RIGHT_THUMB;
+        const auto& action = actions_[i];
 
-    // --- D-Pad ---
-    if (nb & btn::kDpadUp)      xb |= XUSB_GAMEPAD_DPAD_UP;
-    if (nb & btn::kDpadDown)    xb |= XUSB_GAMEPAD_DPAD_DOWN;
-    if (nb & btn::kDpadLeft)    xb |= XUSB_GAMEPAD_DPAD_LEFT;
-    if (nb & btn::kDpadRight)   xb |= XUSB_GAMEPAD_DPAD_RIGHT;
-
-    // --- Back paddles: MVP maps to unused Xbox buttons as defaults ---
-    // L4/R4 are in ext, L5/R5 are in btn
-    // These will be fully configurable later.
-    // For now: no Xbox mapping (back paddles don't have Xbox equivalents)
+        switch (action.type) {
+            case ActionType::XboxButton:
+                if (pressed && action.code != 0) {
+                    xb |= static_cast<USHORT>(action.code);
+                }
+                break;
+            case ActionType::Keyboard:
+                synth.key_set(action.code, pressed);
+                break;
+            case ActionType::MouseButton:
+                synth.mouse_set(static_cast<uint8_t>(action.code), pressed);
+                break;
+            case ActionType::None:
+                break;
+        }
+    }
 
     return xb;
 }

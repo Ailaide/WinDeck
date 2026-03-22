@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mapper/dead_zone.h"
+#include "config/profile.h"
 #include <cstdint>
 
 namespace windeck::mapper {
@@ -13,7 +13,7 @@ public:
         outer_ = outer;
     }
 
-    void set_response_curve(ResponseCurve curve) {
+    void set_response_curve(config::ResponseCurve curve) {
         curve_ = curve;
     }
 
@@ -23,7 +23,7 @@ public:
 private:
     float inner_ = 0.05f;
     float outer_ = 0.95f;
-    ResponseCurve curve_ = ResponseCurve::Linear;
+    config::ResponseCurve curve_ = config::ResponseCurve::Linear;
 };
 
 } // namespace windeck::mapper

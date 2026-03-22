@@ -1,4 +1,5 @@
 #include "mapper/stick_mapper.h"
+#include "mapper/dead_zone.h"
 
 namespace windeck::mapper {
 

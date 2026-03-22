@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(WinDeck VERSION 0.1.0 LANGUAGES CXX)
+project(WinDeck VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,8 +28,9 @@ add_executable(windeck
     src/mapper/button_mapper.cpp
     src/mapper/stick_mapper.cpp
     src/mapper/trigger_mapper.cpp
-    src/mapper/dead_zone.cpp
     src/driver/driver_manager.cpp
+    src/config/config.cpp
+    src/hidhide/hidhide_client.cpp
 )
 
 target_include_directories(windeck PRIVATE src)

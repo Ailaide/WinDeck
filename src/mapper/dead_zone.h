@@ -1,17 +1,14 @@
 #pragma once
 
+#include "config/profile.h"
 #include <cstdint>
 #include <cmath>
 #include <algorithm>
 
 namespace windeck::mapper {
 
-// Response curve presets for stick output
-enum class ResponseCurve : uint8_t {
-    Linear,           // 1:1 mapping
-    Quadratic,        // Slow start, fine control at low deflection
-    InverseQuadratic  // Fast start, most range at high deflection
-};
+// Use the canonical ResponseCurve from config
+using config::ResponseCurve;
 
 // Apply response curve to a normalized magnitude [0, 1] → [0, 1]
 inline float apply_curve(float t, ResponseCurve curve) {
@@ -39,8 +36,11 @@ inline void apply_stick_deadzone(int16_t raw_x, int16_t raw_y,
         return;
     }
 
+    float range = outer - inner;
+    if (range < 1e-6f) { out_x = 0; out_y = 0; return; }
+
     float clamped = (mag < outer) ? mag : outer;
-    float normalized = (clamped - inner) / (outer - inner);
+    float normalized = (clamped - inner) / range;
     float curved = apply_curve(normalized, curve);
     float factor = curved / mag;
 
@@ -52,7 +52,9 @@ inline void apply_stick_deadzone(int16_t raw_x, int16_t raw_y,
 inline uint8_t apply_trigger_deadzone(uint16_t raw, float threshold) {
     float normalized = static_cast<float>(raw) / 32767.0f;
     if (normalized < threshold) return 0;
-    float scaled = (normalized - threshold) / (1.0f - threshold);
+    float denom = 1.0f - threshold;
+    if (denom < 1e-6f) return 255;
+    float scaled = (normalized - threshold) / denom;
     return static_cast<uint8_t>(std::clamp(scaled * 255.0f, 0.0f, 255.0f));
 }
 

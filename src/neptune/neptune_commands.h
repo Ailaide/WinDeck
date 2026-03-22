@@ -38,11 +38,6 @@ struct ClearMappingsReport_v1 {
 };
 static_assert(sizeof(ClearMappingsReport_v1) == 65, "Must be 65 bytes");
 
-struct ClearMappingsReport_v2 {
-    uint8_t report_id = kReportIdClearMappings;  // 0x81 as report ID
-    uint8_t padding[64] = {};
-};
-static_assert(sizeof(ClearMappingsReport_v2) == 65, "Must be 65 bytes");
 
 // Setting IDs from Linux hid-steam.c
 constexpr uint8_t kSettingLeftTrackpadMode           = 7;
@@ -84,27 +79,6 @@ struct DisableLizardSettings_v1 {
 };
 static_assert(sizeof(DisableLizardSettings_v1) == 65, "Must be 65 bytes");
 
-struct DisableLizardSettings_v2 {
-    uint8_t report_id = kReportIdSetSettings;    // 0x87 as report ID
-    uint8_t data_len = 15;
-    uint8_t s1_id = kSettingSteamWatchdogEnable;
-    uint8_t s1_val_lo = 0;
-    uint8_t s1_val_hi = 0;
-    uint8_t s2_id = kSettingLeftTrackpadMode;
-    uint8_t s2_val_lo = kTrackpadNone;
-    uint8_t s2_val_hi = 0;
-    uint8_t s3_id = kSettingRightTrackpadMode;
-    uint8_t s3_val_lo = kTrackpadNone;
-    uint8_t s3_val_hi = 0;
-    uint8_t s4_id = kSettingLeftTrackpadClickPressure;
-    uint8_t s4_val_lo = 0xFF;
-    uint8_t s4_val_hi = 0xFF;
-    uint8_t s5_id = kSettingRightTrackpadClickPressure;
-    uint8_t s5_val_lo = 0xFF;
-    uint8_t s5_val_hi = 0xFF;
-    uint8_t padding[48] = {};
-};
-static_assert(sizeof(DisableLizardSettings_v2) == 65, "Must be 65 bytes");
 
 #pragma pack(push, 1)
 
