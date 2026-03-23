@@ -36,6 +36,7 @@ public:
 
 private:
     config::TouchpadMode mode_ = config::TouchpadMode::Disabled;
+    config::TouchpadAccelerationPreset acceleration_ = config::TouchpadAccelerationPreset::Normal;
     config::ButtonAction click_action_{};
     uint16_t pressure_threshold_ = 50;
 

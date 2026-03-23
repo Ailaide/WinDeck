@@ -3,16 +3,57 @@
 
 namespace windeck::mapper {
 
+namespace {
+
+struct AccelParams {
+    float start_speed;
+    float strength;
+    float exponent;
+    float max_gain;
+};
+
+AccelParams get_accel_params(config::TouchpadAccelerationPreset preset) {
+    switch (preset) {
+        case config::TouchpadAccelerationPreset::Strong:
+            return {0.6f, 0.85f, 1.45f, 3.0f};
+        case config::TouchpadAccelerationPreset::Off:
+            return {0.0f, 0.0f, 1.0f, 1.0f};
+        case config::TouchpadAccelerationPreset::Normal:
+        default:
+            return {0.8f, 0.55f, 1.35f, 2.2f};
+    }
+}
+
+float accel_gain_for_speed(float speed, config::TouchpadAccelerationPreset preset) {
+    if (preset == config::TouchpadAccelerationPreset::Off) {
+        return 1.0f;
+    }
+
+    const AccelParams p = get_accel_params(preset);
+    if (speed <= p.start_speed) {
+        return 1.0f;
+    }
+
+    float gain = 1.0f + p.strength * std::pow(speed - p.start_speed, p.exponent);
+    if (gain > p.max_gain) {
+        gain = p.max_gain;
+    }
+    return gain;
+}
+
+}  // namespace
+
 void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
     mode_ = cfg.mode;
+    acceleration_ = cfg.acceleration;
     pressure_threshold_ = cfg.pressure_threshold;
     click_action_ = cfg.click_action;
     mouse_.set_sensitivity(cfg.sensitivity);
     // Friction is configured as "feel" value (0.95 = gentle).
     // Convert to per-frame at 250Hz: pow(feel, 1) is too fast,
     // so we remap to a higher value for smooth decay.
-    // 0.95 feel → 0.998 per frame → ~1.2s decay at 250Hz
-    float per_frame_friction = 1.0f - (1.0f - cfg.friction) * 0.04f;
+    // 0.95 feel → 0.985 per frame → ~0.16s decay at 250Hz
+    float per_frame_friction = 1.0f - (1.0f - cfg.friction) * 0.3f;
     inertia_.set_friction(per_frame_friction);
     inertia_.set_cutoff(0.1f);
 
@@ -59,31 +100,39 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
             float dx = static_cast<float>(pad_x - prev_x_);
             float dy = static_cast<float>(pad_y - prev_y_);
 
-            // Track velocity for inertia (50/50 smoothing)
-            vel_x_ = vel_x_ * 0.5f + dx * 0.5f;
-            vel_y_ = vel_y_ * 0.5f + dy * 0.5f;
-
-            // Update inertia confidence accumulator
-            float cur_speed = std::sqrt(vel_x_ * vel_x_ + vel_y_ * vel_y_) * kTouchScale;
-            if (cur_speed >= kMinInertiaSpeed) {
-                inertia_confidence_ += kConfidenceStep;
-                if (inertia_confidence_ > 1.0f) inertia_confidence_ = 1.0f;
-            } else {
-                inertia_confidence_ -= kConfidenceStep;
-                if (inertia_confidence_ < 0.0f) inertia_confidence_ = 0.0f;
-            }
-
             float scaled_dx = dx * kTouchScale;
             float scaled_dy = -dy * kTouchScale; // Invert Y: pad up = cursor up (negative screen Y)
 
             switch (mode_) {
                 case config::TouchpadMode::TrackpadInertia:
-                case config::TouchpadMode::Mouse:
-                    mouse_.update_delta(scaled_dx, scaled_dy, synth);
+                case config::TouchpadMode::Mouse: {
+                    float speed = std::sqrt(scaled_dx * scaled_dx + scaled_dy * scaled_dy);
+                    float gain = accel_gain_for_speed(speed, acceleration_);
+                    float effective_dx = scaled_dx * gain;
+                    float effective_dy = scaled_dy * gain;
+
+                    // Track accelerated velocity to keep inertia start speed continuous.
+                    vel_x_ = vel_x_ * 0.5f + effective_dx * 0.5f;
+                    vel_y_ = vel_y_ * 0.5f + effective_dy * 0.5f;
+
+                    float cur_speed = std::sqrt(vel_x_ * vel_x_ + vel_y_ * vel_y_);
+                    if (cur_speed >= kMinInertiaSpeed) {
+                        inertia_confidence_ += kConfidenceStep;
+                        if (inertia_confidence_ > 1.0f) inertia_confidence_ = 1.0f;
+                    } else {
+                        inertia_confidence_ -= kConfidenceStep;
+                        if (inertia_confidence_ < 0.0f) inertia_confidence_ = 0.0f;
+                    }
+
+                    mouse_.update_delta(effective_dx, effective_dy, synth);
                     break;
+                }
 
                 case config::TouchpadMode::Wasd:
                 case config::TouchpadMode::Arrows: {
+                    vel_x_ = 0.0f;
+                    vel_y_ = 0.0f;
+                    inertia_confidence_ = 0.0f;
                     float fx = static_cast<float>(pad_x) / 32767.0f;
                     float fy = static_cast<float>(pad_y) / 32767.0f;
                     directional_.update_analog(fx, fy, 0.2f, synth);
@@ -91,10 +140,16 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                 }
 
                 case config::TouchpadMode::Scroll:
+                    vel_x_ = 0.0f;
+                    vel_y_ = 0.0f;
+                    inertia_confidence_ = 0.0f;
                     synth.mouse_scroll(static_cast<int>(scaled_dy * 3.0f));
                     break;
 
                 default:
+                    vel_x_ = 0.0f;
+                    vel_y_ = 0.0f;
+                    inertia_confidence_ = 0.0f;
                     break;
             }
         }
@@ -107,8 +162,7 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
             // Finger just lifted — start inertia only if confidence > 0.5
             if (mode_ == config::TouchpadMode::TrackpadInertia) {
                 if (inertia_confidence_ > 0.5f) {
-                    constexpr float kScale = 0.0097f;
-                    inertia_.set_velocity(vel_x_ * kScale, -vel_y_ * kScale);
+                    inertia_.set_velocity(vel_x_, vel_y_);
                     inertia_.begin();
                 }
                 inertia_confidence_ = 0.0f;

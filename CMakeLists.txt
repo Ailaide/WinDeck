@@ -41,9 +41,10 @@ add_executable(windeck
 
 target_include_directories(windeck PRIVATE src)
 
-# Require administrator privileges (needed for HID access)
+# Embed application manifest (UAC level + WinRT compatibility)
 if(MSVC)
-    target_link_options(windeck PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
+    target_sources(windeck PRIVATE "${CMAKE_SOURCE_DIR}/resources/windeck.manifest")
+    target_link_options(windeck PRIVATE "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_SOURCE_DIR}/resources/windeck.manifest")
 endif()
 
 target_link_libraries(windeck PRIVATE

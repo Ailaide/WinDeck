@@ -105,6 +105,20 @@ static TouchpadMode parse_touchpad_mode(const std::string& s) {
     return TouchpadMode::TrackpadInertia;
 }
 
+static const char* touchpad_accel_str(TouchpadAccelerationPreset p) {
+    switch (p) {
+        case TouchpadAccelerationPreset::Off:    return "off";
+        case TouchpadAccelerationPreset::Strong: return "strong";
+        default:                                 return "normal";
+    }
+}
+
+static TouchpadAccelerationPreset parse_touchpad_accel(const std::string& s) {
+    if (s == "off")    return TouchpadAccelerationPreset::Off;
+    if (s == "strong") return TouchpadAccelerationPreset::Strong;
+    return TouchpadAccelerationPreset::Normal;
+}
+
 static const char* gyro_mode_str(GyroMode m) {
     switch (m) {
         case GyroMode::RightStick: return "right_stick";
@@ -189,6 +203,7 @@ std::string profile_to_json(const Profile& p) {
             {"pressure_threshold", t.pressure_threshold},
             {"sensitivity", t.sensitivity},
             {"friction", t.friction},
+            {"acceleration", touchpad_accel_str(t.acceleration)},
             {"click_action", action_to_json(t.click_action)}
         };
         if (t.mode == TouchpadMode::RadialMenu) {
@@ -265,6 +280,7 @@ Profile profile_from_json(const std::string& json_str) {
         t.pressure_threshold = pj.value("pressure_threshold", (uint16_t)50);
         t.sensitivity = pj.value("sensitivity", 1.0f);
         t.friction = pj.value("friction", 0.95f);
+        t.acceleration = parse_touchpad_accel(pj.value("acceleration", "normal"));
         if (pj.contains("click_action")) {
             t.click_action = action_from_json(pj["click_action"]);
         }

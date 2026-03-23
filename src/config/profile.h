@@ -55,11 +55,18 @@ enum class TouchpadMode : uint8_t {
     RadialMenu, DpadButtons, Scroll, Disabled
 };
 
+enum class TouchpadAccelerationPreset : uint8_t {
+    Off,
+    Normal,
+    Strong
+};
+
 struct TouchpadConfig {
     TouchpadMode mode = TouchpadMode::TrackpadInertia;
     uint16_t     pressure_threshold = 50;   // 0-255
     float        sensitivity = 1.0f;
     float        friction = 0.95f;          // For inertia mode
+    TouchpadAccelerationPreset acceleration = TouchpadAccelerationPreset::Normal;
     ButtonAction click_action = {ActionType::MouseButton, 0}; // Default: LMB
     // Radial menu: 8 sectors, default keys 1-8 starting at 12 o'clock clockwise
     std::array<ButtonAction, 8> radial_keys = {{

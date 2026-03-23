@@ -1,6 +1,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
+#include <objbase.h>
+#include <UIAutomation.h>
+#pragma comment(lib, "ole32.lib")
 
 #include "neptune/neptune_device.h"
 #include "output/virtual_xbox.h"
@@ -15,6 +18,7 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <atomic>
 #include <csignal>
+#include <iostream>
 #include <thread>
 #include <chrono>
 #include <filesystem>
@@ -48,16 +52,123 @@ static BOOL WINAPI console_handler(DWORD event) {
     return FALSE;
 }
 
-static void toggle_on_screen_keyboard() {
-    // Find existing osk.exe window
-    HWND hwnd = FindWindowW(L"OSKMainClass", nullptr);
-    if (hwnd) {
-        // Already running — close it
-        PostMessageW(hwnd, WM_CLOSE, 0, 0);
-    } else {
-        // Not running — launch it
-        ShellExecuteW(nullptr, L"open", L"osk.exe", nullptr, nullptr, SW_SHOWNORMAL);
+static void open_touch_keyboard() {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+    IUIAutomation* uia = nullptr;
+    HRESULT hr = CoCreateInstance(__uuidof(CUIAutomation), nullptr,
+        CLSCTX_INPROC_SERVER, __uuidof(IUIAutomation), reinterpret_cast<void**>(&uia));
+    if (FAILED(hr) || !uia) {
+        spdlog::warn("Failed to create UIAutomation: {:#x}", static_cast<unsigned>(hr));
+        CoUninitialize();
+        return;
     }
+
+    // Find the system tray notification area
+    HWND tray_wnd = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (!tray_wnd) {
+        spdlog::warn("Shell_TrayWnd not found");
+        uia->Release();
+        CoUninitialize();
+        return;
+    }
+
+    IUIAutomationElement* tray_elem = nullptr;
+    hr = uia->ElementFromHandle(tray_wnd, &tray_elem);
+    if (FAILED(hr) || !tray_elem) {
+        spdlog::warn("ElementFromHandle failed: {:#x}", static_cast<unsigned>(hr));
+        uia->Release();
+        CoUninitialize();
+        return;
+    }
+
+    // Search for a button with AutomationId "TipBandButtonID" (the touch keyboard tray button)
+    IUIAutomationCondition* cond_id = nullptr;
+    VARIANT var_id;
+    var_id.vt = VT_BSTR;
+    var_id.bstrVal = SysAllocString(L"TipBandButtonID");
+    uia->CreatePropertyCondition(UIA_AutomationIdPropertyId, var_id, &cond_id);
+    SysFreeString(var_id.bstrVal);
+
+    IUIAutomationElement* kbd_btn = nullptr;
+    if (cond_id) {
+        hr = tray_elem->FindFirst(TreeScope_Descendants, cond_id, &kbd_btn);
+        cond_id->Release();
+    }
+
+    if (!kbd_btn) {
+        // Fallback: search by Name containing "keyboard" (localization-safe via partial match)
+        IUIAutomationCondition* cond_type = nullptr;
+        VARIANT var_type;
+        var_type.vt = VT_I4;
+        var_type.lVal = UIA_ButtonControlTypeId;
+        uia->CreatePropertyCondition(UIA_ControlTypePropertyId, var_type, &cond_type);
+
+        IUIAutomationElementArray* buttons = nullptr;
+        if (cond_type) {
+            tray_elem->FindAll(TreeScope_Descendants, cond_type, &buttons);
+            cond_type->Release();
+        }
+
+        if (buttons) {
+            int count = 0;
+            buttons->get_Length(&count);
+            for (int i = 0; i < count && !kbd_btn; i++) {
+                IUIAutomationElement* elem = nullptr;
+                buttons->GetElement(i, &elem);
+                if (elem) {
+                    BSTR name = nullptr;
+                    elem->get_CurrentName(&name);
+                    if (name) {
+                        std::wstring wname(name);
+                        // Check common names across localizations
+                        if (wname.find(L"keyboard") != std::wstring::npos ||
+                            wname.find(L"Keyboard") != std::wstring::npos ||
+                            wname.find(L"Touch") != std::wstring::npos) {
+                            kbd_btn = elem;
+                        }
+                        SysFreeString(name);
+                    }
+                    if (kbd_btn != elem) elem->Release();
+                }
+            }
+            buttons->Release();
+        }
+    }
+
+    if (kbd_btn) {
+        // Try TogglePattern first (toggle button), then InvokePattern as fallback
+        IUIAutomationTogglePattern* toggle = nullptr;
+        hr = kbd_btn->GetCurrentPatternAs(UIA_TogglePatternId,
+            __uuidof(IUIAutomationTogglePattern), reinterpret_cast<void**>(&toggle));
+        if (SUCCEEDED(hr) && toggle) {
+            hr = toggle->Toggle();
+            spdlog::info("Touch keyboard toggled via TogglePattern (hr={:#x})",
+                static_cast<unsigned>(hr));
+            toggle->Release();
+        } else {
+            IUIAutomationInvokePattern* invoke = nullptr;
+            hr = kbd_btn->GetCurrentPatternAs(UIA_InvokePatternId,
+                __uuidof(IUIAutomationInvokePattern), reinterpret_cast<void**>(&invoke));
+            if (SUCCEEDED(hr) && invoke) {
+                hr = invoke->Invoke();
+                spdlog::info("Touch keyboard toggled via InvokePattern (hr={:#x})",
+                    static_cast<unsigned>(hr));
+                invoke->Release();
+            } else {
+                spdlog::warn("No Toggle or Invoke pattern on keyboard button: {:#x}",
+                    static_cast<unsigned>(hr));
+            }
+        }
+        kbd_btn->Release();
+    } else {
+        spdlog::warn("Touch keyboard button not found in taskbar. "
+            "Enable it: Settings > Personalization > Taskbar > Touch keyboard");
+    }
+
+    tray_elem->Release();
+    uia->Release();
+    CoUninitialize();
 }
 
 static void input_loop(windeck::neptune::NeptuneDevice& device,
@@ -105,7 +216,8 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                 }
             }
             if (result.sys_events.quick_access_pressed) {
-                toggle_on_screen_keyboard();
+                spdlog::info("Quick Access button pressed, toggling touch keyboard");
+                open_touch_keyboard();
             }
         } else if (read_result == 0) {
             // Timeout — tick inertia
@@ -219,11 +331,113 @@ int main() {
                               std::ref(mapper),
                               std::ref(synth));
 
-    spdlog::info("WinDeck running. Press Ctrl+C to stop.");
+    spdlog::info("WinDeck running. Type 'help' for commands, Ctrl+C to stop.");
 
-    // Main thread: wait for shutdown
+    // Main thread: console command loop
+    std::string line;
     while (g_running.load(std::memory_order_relaxed)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Non-blocking stdin check
+        HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+        DWORD events = 0;
+        if (GetNumberOfConsoleInputEvents(hStdin, &events) && events > 0) {
+            INPUT_RECORD rec;
+            DWORD read_count;
+            PeekConsoleInputW(hStdin, &rec, 1, &read_count);
+            if (read_count > 0 && rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown
+                && rec.Event.KeyEvent.wVirtualKeyCode == VK_RETURN) {
+                // Enter pressed, read the line
+                std::getline(std::cin, line);
+                if (line.empty()) continue;
+
+                auto profile = config.get_profile();
+                bool changed = false;
+
+                if (line == "help") {
+                    printf("Commands:\n");
+                    printf("  rpad trackpad|mouse|wasd|arrows|scroll|disabled\n");
+                    printf("  lpad trackpad|mouse|wasd|arrows|scroll|disabled\n");
+                    printf("  lstick stick|wasd|arrows|mouse\n");
+                    printf("  rstick stick|wasd|arrows|mouse\n");
+                    printf("  dpad dpad|wasd|arrows\n");
+                    printf("  gyro off|mouse|rstick\n");
+                    printf("  remap <button> xbox|keyboard|mouse <code>\n");
+                    printf("    buttons: A B X Y LB RB Start Back LS RS L4 L5 R4 R5\n");
+                    printf("  save   - save current profile\n");
+                    printf("  status - show current modes\n");
+                } else if (line.substr(0, 5) == "rpad " || line.substr(0, 5) == "lpad ") {
+                    bool is_right = (line[0] == 'r');
+                    auto& pad = is_right ? profile.right_touchpad : profile.left_touchpad;
+                    auto mode_str = line.substr(5);
+                    if (mode_str == "trackpad")     pad.mode = windeck::config::TouchpadMode::TrackpadInertia;
+                    else if (mode_str == "mouse")   pad.mode = windeck::config::TouchpadMode::Mouse;
+                    else if (mode_str == "wasd")    pad.mode = windeck::config::TouchpadMode::Wasd;
+                    else if (mode_str == "arrows")  pad.mode = windeck::config::TouchpadMode::Arrows;
+                    else if (mode_str == "scroll")  pad.mode = windeck::config::TouchpadMode::Scroll;
+                    else if (mode_str == "disabled") pad.mode = windeck::config::TouchpadMode::Disabled;
+                    else { printf("Unknown mode: %s\n", mode_str.c_str()); continue; }
+                    changed = true;
+                    printf("%cpad -> %s\n", line[0], mode_str.c_str());
+                } else if (line.substr(0, 7) == "lstick " || line.substr(0, 7) == "rstick ") {
+                    bool is_right = (line[0] == 'r');
+                    auto& stick = is_right ? profile.right_stick : profile.left_stick;
+                    auto mode_str = line.substr(7);
+                    if (mode_str == "stick")        stick.mode = windeck::config::StickMode::Stick;
+                    else if (mode_str == "wasd")    stick.mode = windeck::config::StickMode::Wasd;
+                    else if (mode_str == "arrows")  stick.mode = windeck::config::StickMode::Arrows;
+                    else if (mode_str == "mouse")   stick.mode = windeck::config::StickMode::Mouse;
+                    else { printf("Unknown mode: %s\n", mode_str.c_str()); continue; }
+                    changed = true;
+                    printf("%cstick -> %s\n", line[0], mode_str.c_str());
+                } else if (line.substr(0, 5) == "dpad ") {
+                    auto mode_str = line.substr(5);
+                    if (mode_str == "dpad")         profile.dpad.mode = windeck::config::DpadMode::Dpad;
+                    else if (mode_str == "wasd")    profile.dpad.mode = windeck::config::DpadMode::Wasd;
+                    else if (mode_str == "arrows")  profile.dpad.mode = windeck::config::DpadMode::Arrows;
+                    else { printf("Unknown mode: %s\n", mode_str.c_str()); continue; }
+                    changed = true;
+                    printf("dpad -> %s\n", mode_str.c_str());
+                } else if (line.substr(0, 5) == "gyro ") {
+                    auto mode_str = line.substr(5);
+                    if (mode_str == "off")           profile.gyro.mode = windeck::config::GyroMode::Off;
+                    else if (mode_str == "mouse")    profile.gyro.mode = windeck::config::GyroMode::Mouse;
+                    else if (mode_str == "rstick")   profile.gyro.mode = windeck::config::GyroMode::RightStick;
+                    else { printf("Unknown mode: %s\n", mode_str.c_str()); continue; }
+                    changed = true;
+                    printf("gyro -> %s\n", mode_str.c_str());
+                } else if (line == "save") {
+                    config.save_profile();
+                    printf("Profile saved.\n");
+                } else if (line == "status") {
+                    auto p = config.get_profile();
+                    const char* pad_modes[] = {"trackpad","mouse","wasd","arrows","radial","dpad","scroll","disabled"};
+                    const char* stick_modes[] = {"stick","wasd","arrows","mouse"};
+                    const char* dpad_modes[] = {"dpad","wasd","arrows"};
+                    const char* gyro_modes[] = {"off","rstick","mouse"};
+                    printf("rpad=%s lpad=%s lstick=%s rstick=%s dpad=%s gyro=%s\n",
+                        pad_modes[static_cast<int>(p.right_touchpad.mode)],
+                        pad_modes[static_cast<int>(p.left_touchpad.mode)],
+                        stick_modes[static_cast<int>(p.left_stick.mode)],
+                        stick_modes[static_cast<int>(p.right_stick.mode)],
+                        dpad_modes[static_cast<int>(p.dpad.mode)],
+                        gyro_modes[static_cast<int>(p.gyro.mode)]);
+                } else {
+                    printf("Unknown command. Type 'help'.\n");
+                }
+
+                if (changed) {
+                    config.set_profile(profile);
+                    mapper.apply_profile(profile);
+                }
+            } else {
+                // Consume non-Enter events to avoid buildup
+                if (read_count > 0 && rec.EventType != KEY_EVENT) {
+                    ReadConsoleInputW(hStdin, &rec, 1, &read_count);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
     }
 
     spdlog::info("Shutting down...");
