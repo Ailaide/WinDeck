@@ -108,6 +108,11 @@ int NeptuneDevice::read(InputReport& report) {
         return 0;
     }
 
+    // Validate report: expect report_id=0x01, msg_type=0x09 (Deck input)
+    if (buf[0] != 0x01 || (bytes > 2 && buf[2] != 0x09)) {
+        return 0; // Not a Deck input report, skip silently
+    }
+
     if (bytes >= static_cast<int>(sizeof(InputReport))) {
         std::memcpy(&report, buf, sizeof(InputReport));
         return 1;

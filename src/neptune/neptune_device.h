@@ -41,12 +41,13 @@ public:
     // Returns true if the device is currently open.
     bool is_open() const { return device_ != nullptr; }
 
+    // Re-enable lizard mode (restore default keyboard/mouse emulation on exit).
+    // Public because emergency restore needs to call it from input thread.
+    void enable_lizard_mode();
+
 private:
     // Disable lizard mode (keyboard/mouse emulation) so we get raw gamepad input.
     void disable_lizard_mode();
-
-    // Re-enable lizard mode (restore default keyboard/mouse emulation on exit).
-    void enable_lizard_mode();
 
     // Send a feature report. Returns true on success.
     bool send_feature_report(const uint8_t* data, size_t len);

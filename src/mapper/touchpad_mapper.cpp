@@ -143,7 +143,14 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                     vel_x_ = 0.0f;
                     vel_y_ = 0.0f;
                     inertia_confidence_ = 0.0f;
-                    synth.mouse_scroll(static_cast<int>(scaled_dy * 3.0f));
+                    scroll_accum_ += scaled_dy * 3.0f;
+                    {
+                        int scroll_int = static_cast<int>(scroll_accum_);
+                        if (scroll_int != 0) {
+                            synth.mouse_scroll(scroll_int);
+                            scroll_accum_ -= static_cast<float>(scroll_int);
+                        }
+                    }
                     break;
 
                 default:

@@ -13,6 +13,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <ViGEm/Client.h>
+#include <shared_mutex>
 
 namespace windeck::mapper {
 
@@ -35,6 +36,7 @@ public:
     void release_all(windeck::output::SyntheticInput& synth);
 
 private:
+    mutable std::shared_mutex mutex_;
     ButtonMapper   button_mapper_;
     StickMapper    left_stick_;
     StickMapper    right_stick_;

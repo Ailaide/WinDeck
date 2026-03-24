@@ -12,13 +12,14 @@ void Mapper::set_device(windeck::neptune::NeptuneDevice* device) {
 }
 
 void Mapper::apply_profile(const config::Profile& profile) {
+    std::unique_lock lock(mutex_);
     button_mapper_.set_config(profile.buttons);
 
     left_stick_.apply_config(profile.left_stick);
     right_stick_.apply_config(profile.right_stick);
 
-    left_trigger_.set_threshold(profile.left_trigger.threshold);
-    right_trigger_.set_threshold(profile.right_trigger.threshold);
+    left_trigger_.apply_config(profile.left_trigger);
+    right_trigger_.apply_config(profile.right_trigger);
 
     dpad_.apply_config(profile.dpad);
 
@@ -32,6 +33,7 @@ void Mapper::apply_profile(const config::Profile& profile) {
 
 MapResult Mapper::map(const neptune::InputReport& input,
                        windeck::output::SyntheticInput& synth) {
+    std::shared_lock lock(mutex_);
     MapResult result;
     std::memset(&result.xbox_report, 0, sizeof(result.xbox_report));
 
@@ -49,8 +51,8 @@ MapResult Mapper::map(const neptune::InputReport& input,
                       result.xbox_report.sThumbRX, result.xbox_report.sThumbRY, synth);
 
     // Triggers
-    result.xbox_report.bLeftTrigger  = left_trigger_.map(input.left_trigger);
-    result.xbox_report.bRightTrigger = right_trigger_.map(input.right_trigger);
+    result.xbox_report.bLeftTrigger  = left_trigger_.map(input.left_trigger, synth);
+    result.xbox_report.bRightTrigger = right_trigger_.map(input.right_trigger, synth);
 
     // Touchpads — coordinates reset to (0,0) when finger lifts (verified on hardware)
     bool touching_left  = (input.left_pad_x != 0 || input.left_pad_y != 0);

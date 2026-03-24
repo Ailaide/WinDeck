@@ -24,7 +24,8 @@
 #include <filesystem>
 
 static std::atomic<bool> g_running{true};
-static windeck::neptune::NeptuneDevice* g_neptune = nullptr; // For emergency restore
+static std::atomic<bool> g_emergency_restore{false};
+static windeck::neptune::NeptuneDevice* g_neptune = nullptr;
 
 static void signal_handler(int /*sig*/) {
     g_running.store(false, std::memory_order_relaxed);
@@ -40,13 +41,11 @@ static BOOL WINAPI console_handler(DWORD event) {
         case CTRL_CLOSE_EVENT:
         case CTRL_LOGOFF_EVENT:
         case CTRL_SHUTDOWN_EVENT:
-            // On console close/logoff/shutdown, Windows may kill the process
-            // before normal cleanup runs. Restore lizard mode immediately.
-            if (g_neptune) {
-                g_neptune->close(); // Calls enable_lizard_mode() internally
-            }
+            // Signal emergency restore. The input loop checks this flag
+            // and performs the restore from its own thread (safe).
+            g_emergency_restore.store(true, std::memory_order_relaxed);
             g_running.store(false, std::memory_order_relaxed);
-            Sleep(3000);
+            Sleep(5000); // Give input thread time to restore
             return TRUE;
     }
     return FALSE;
@@ -217,7 +216,7 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
             }
             if (result.sys_events.quick_access_pressed) {
                 spdlog::info("Quick Access button pressed, toggling touch keyboard");
-                open_touch_keyboard();
+                std::thread(open_touch_keyboard).detach();
             }
         } else if (read_result == 0) {
             // Timeout — tick inertia
@@ -246,6 +245,15 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
 
     mapper.release_all(synth);
     synth.release_all();
+
+    // Emergency restore: if console is closing, restore lizard mode from this thread
+    // (safe — no other thread is accessing the device now)
+    if (g_emergency_restore.load(std::memory_order_relaxed)) {
+        device.enable_lizard_mode();
+        spdlog::info("Emergency lizard mode restore completed");
+        spdlog::default_logger()->flush();
+    }
+
     spdlog::info("Input loop stopped");
 }
 
@@ -429,8 +437,8 @@ int main() {
                     mapper.apply_profile(profile);
                 }
             } else {
-                // Consume non-Enter events to avoid buildup
-                if (read_count > 0 && rec.EventType != KEY_EVENT) {
+                // Consume non-Enter events to avoid buildup in input queue
+                if (read_count > 0) {
                     ReadConsoleInputW(hStdin, &rec, 1, &read_count);
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));

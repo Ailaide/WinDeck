@@ -217,10 +217,18 @@ std::string profile_to_json(const Profile& p) {
     j["right_touchpad"] = pad_json(p.right_touchpad);
 
     // Gyro
+    auto gyro_activation_str = [](GyroActivation a) -> std::string {
+        switch (a) {
+            case GyroActivation::TouchRightPad: return "touch_right_pad";
+            case GyroActivation::TouchLeftPad:  return "touch_left_pad";
+            default: return "always";
+        }
+    };
     j["gyro"] = {
         {"mode", gyro_mode_str(p.gyro.mode)},
         {"sensitivity_x", p.gyro.sensitivity_x},
-        {"sensitivity_y", p.gyro.sensitivity_y}
+        {"sensitivity_y", p.gyro.sensitivity_y},
+        {"activation", gyro_activation_str(p.gyro.activation)}
     };
 
     return j.dump(2);
@@ -299,6 +307,10 @@ Profile profile_from_json(const std::string& json_str) {
         p.gyro.mode = parse_gyro_mode(j["gyro"].value("mode", "off"));
         p.gyro.sensitivity_x = j["gyro"].value("sensitivity_x", 1.0f);
         p.gyro.sensitivity_y = j["gyro"].value("sensitivity_y", 1.0f);
+        auto act_str = j["gyro"].value("activation", "always");
+        if (act_str == "touch_right_pad")     p.gyro.activation = GyroActivation::TouchRightPad;
+        else if (act_str == "touch_left_pad") p.gyro.activation = GyroActivation::TouchLeftPad;
+        else                                  p.gyro.activation = GyroActivation::Always;
     }
 
     return p;

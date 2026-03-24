@@ -56,6 +56,9 @@ private:
     // Click state
     bool click_held_ = false;
 
+    // Scroll accumulator for sub-pixel deltas
+    float scroll_accum_ = 0.0f;
+
     modes::MouseMode mouse_;
     modes::DirectionalMode directional_;
     modes::Inertia inertia_;

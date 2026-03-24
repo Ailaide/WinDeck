@@ -45,11 +45,7 @@ USHORT ButtonMapper::map(uint32_t nb, uint32_t nb_ext,
     sys_events.steam_pressed        = (rising_btn & btn::kSteam) != 0;
     sys_events.quick_access_pressed = (rising_ext & btn_ext::kQuickAccess) != 0;
 
-    // --- D-Pad: always direct to Xbox (not remappable yet) ---
-    if (nb & btn::kDpadUp)    xb |= XUSB_GAMEPAD_DPAD_UP;
-    if (nb & btn::kDpadDown)  xb |= XUSB_GAMEPAD_DPAD_DOWN;
-    if (nb & btn::kDpadLeft)  xb |= XUSB_GAMEPAD_DPAD_LEFT;
-    if (nb & btn::kDpadRight) xb |= XUSB_GAMEPAD_DPAD_RIGHT;
+    // D-Pad is handled exclusively by DpadMapper (avoids double mapping)
 
     // --- Remappable buttons ---
     if (!configured_) {
