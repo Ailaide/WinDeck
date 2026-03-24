@@ -8,6 +8,8 @@ void StickMapper::apply_config(const config::StickConfig& cfg) {
     inner_ = cfg.inner_deadzone;
     outer_ = cfg.outer_deadzone;
     curve_ = cfg.curve;
+    // Re-arm stick mouse timebase on config/profile changes to avoid first-frame spikes.
+    mouse_.reset_timebase();
 
     switch (cfg.mode) {
         case config::StickMode::Wasd:

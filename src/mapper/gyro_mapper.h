@@ -2,8 +2,8 @@
 
 #include "config/profile.h"
 #include "modes/mouse_mode.h"
+#include "modes/tick_timer.h"
 #include "output/synthetic_input.h"
-#include <chrono>
 #include <cstdint>
 
 namespace windeck::mapper {
@@ -27,8 +27,7 @@ private:
     config::GyroActivation activation_ = config::GyroActivation::Always;
     float sensitivity_x_ = 1.0f;
     float sensitivity_y_ = 1.0f;
-    bool has_last_update_ = false;
-    std::chrono::steady_clock::time_point last_update_{};
+    modes::TickTimer timer_;
 
     modes::MouseMode mouse_;
 

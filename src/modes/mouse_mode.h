@@ -1,7 +1,7 @@
 #pragma once
 
+#include "modes/tick_timer.h"
 #include "output/synthetic_input.h"
-#include <chrono>
 
 namespace windeck::modes {
 
@@ -10,6 +10,7 @@ namespace windeck::modes {
 class MouseMode {
 public:
     void set_sensitivity(float sens) { sensitivity_ = sens; }
+    void reset_timebase() { stick_timer_.reset(); }
 
     // Update from normalized stick input (-1..1). Applies dead zone externally.
     // Output is accumulated mouse delta for the current update tick.
@@ -25,9 +26,7 @@ private:
     float accum_x_ = 0.0f;
     float accum_y_ = 0.0f;
 
-    // Time base for stick->mouse conversion.
-    bool has_last_stick_tick_ = false;
-    std::chrono::steady_clock::time_point last_stick_tick_{};
+    TickTimer stick_timer_;
 };
 
 } // namespace windeck::modes

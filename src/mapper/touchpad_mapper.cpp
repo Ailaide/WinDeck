@@ -47,7 +47,6 @@ constexpr float kMouseEdgeRearmThreshold = 2.0f * kMouseEdgeThreshold - 1.0f;
 constexpr float kMouseEdgeHoldThreshold = kMouseEdgeRearmThreshold;
 constexpr float kMouseEdgeStartSpeed = 1.0f;
 constexpr float kMouseEdgeMotionSmoothingHalfLifeTicks = 6.0f;
-constexpr float kReferenceTickSeconds = 1.0f / 250.0f;
 
 float vec_len(float x, float y) {
     return std::sqrt(x * x + y * y);
@@ -93,20 +92,6 @@ void rotate_vec(float x, float y, float angle, float& out_x, float& out_y) {
     out_y = x * s + y * c;
 }
 
-float step_from_time(bool& has_last_tick, std::chrono::steady_clock::time_point& last_tick) {
-    auto now = std::chrono::steady_clock::now();
-    float step = 1.0f;
-    if (has_last_tick) {
-        float dt = std::chrono::duration<float>(now - last_tick).count();
-        if (dt > 0.0f) {
-            step = dt / kReferenceTickSeconds;
-        }
-    }
-    last_tick = now;
-    has_last_tick = true;
-    return step;
-}
-
 }  // namespace
 
 void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
@@ -122,7 +107,7 @@ void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
     float per_frame_friction = 1.0f - (1.0f - cfg.friction) * 0.3f;
     inertia_.set_friction(per_frame_friction);
     inertia_.set_cutoff(0.1f);
-    touch_sample_has_last_tick_ = false;
+    touch_timer_.reset();
     reset_mouse_edge_state();
     mouse_edge_requires_rearm_ = false;
 
@@ -168,7 +153,7 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
         if (was_touching_) {
             float dx = static_cast<float>(pad_x - prev_x_);
             float dy = static_cast<float>(pad_y - prev_y_);
-            float touch_step = step_from_time(touch_sample_has_last_tick_, touch_sample_last_tick_);
+            float touch_step = touch_timer_.step();
 
             float scaled_dx = dx * kTouchScale;
             float scaled_dy = -dy * kTouchScale; // Invert Y: pad up = cursor up (negative screen Y)
@@ -181,11 +166,11 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                     float effective_dy = scaled_dy * gain;
                     float effective_vx = effective_dx / touch_step;
                     float effective_vy = effective_dy / touch_step;
-                    float smooth_alpha = 1.0f - std::pow(0.5f, touch_step);
+                    float alpha = modes::smooth_alpha(touch_step);
 
                     // Track accelerated velocity to keep inertia start speed continuous.
-                    vel_x_ += (effective_vx - vel_x_) * smooth_alpha;
-                    vel_y_ += (effective_vy - vel_y_) * smooth_alpha;
+                    vel_x_ += (effective_vx - vel_x_) * alpha;
+                    vel_y_ += (effective_vy - vel_y_) * alpha;
 
                     float cur_speed = std::sqrt(vel_x_ * vel_x_ + vel_y_ * vel_y_);
                     float confidence_step = kConfidenceStep * touch_step;
@@ -210,10 +195,10 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                     float effective_dy = scaled_dy * gain;
                     float effective_vx = effective_dx / touch_step;
                     float effective_vy = effective_dy / touch_step;
-                    float smooth_alpha = 1.0f - std::pow(0.5f, touch_step);
+                    float alpha = modes::smooth_alpha(touch_step);
 
-                    vel_x_ += (effective_vx - vel_x_) * smooth_alpha;
-                    vel_y_ += (effective_vy - vel_y_) * smooth_alpha;
+                    vel_x_ += (effective_vx - vel_x_) * alpha;
+                    vel_y_ += (effective_vy - vel_y_) * alpha;
                     float cur_speed = vec_len(vel_x_, vel_y_);
 
                     float touch_x = static_cast<float>(pad_x) * kPadNormScale;
@@ -309,7 +294,7 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                     break;
             }
         } else {
-            touch_sample_has_last_tick_ = false;
+            touch_timer_.reset();
         }
 
         prev_x_ = pad_x;
@@ -339,13 +324,13 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
         vel_x_ = 0.0f;
         vel_y_ = 0.0f;
         inertia_confidence_ = 0.0f;
-        touch_sample_has_last_tick_ = false;
+        touch_timer_.reset();
     }
 }
 
 void TouchpadMapper::tick_inertia(windeck::output::SyntheticInput& synth) {
     if (mode_ == config::TouchpadMode::Mouse && mouse_edge_active_) {
-        float step = step_from_time(mouse_edge_has_last_tick_, mouse_edge_last_tick_);
+        float step = edge_timer_.step();
         float steer_dir_x = 0.0f;
         float steer_dir_y = 0.0f;
         rotate_vec(mouse_edge_entry_motion_x_, mouse_edge_entry_motion_y_,
@@ -354,9 +339,9 @@ void TouchpadMapper::tick_inertia(windeck::output::SyntheticInput& synth) {
         mouse_edge_target_motion_x_ = steer_dir_x * mouse_edge_speed_;
         mouse_edge_target_motion_y_ = steer_dir_y * mouse_edge_speed_;
 
-        float smooth_alpha = 1.0f - std::pow(0.5f, step / kMouseEdgeMotionSmoothingHalfLifeTicks);
-        mouse_edge_smooth_motion_x_ += (mouse_edge_target_motion_x_ - mouse_edge_smooth_motion_x_) * smooth_alpha;
-        mouse_edge_smooth_motion_y_ += (mouse_edge_target_motion_y_ - mouse_edge_smooth_motion_y_) * smooth_alpha;
+        float alpha = modes::smooth_alpha(step, kMouseEdgeMotionSmoothingHalfLifeTicks);
+        mouse_edge_smooth_motion_x_ += (mouse_edge_target_motion_x_ - mouse_edge_smooth_motion_x_) * alpha;
+        mouse_edge_smooth_motion_y_ += (mouse_edge_target_motion_y_ - mouse_edge_smooth_motion_y_) * alpha;
 
         mouse_.update_delta(mouse_edge_smooth_motion_x_ * step,
                             mouse_edge_smooth_motion_y_ * step, synth);
@@ -374,7 +359,7 @@ void TouchpadMapper::release_all(windeck::output::SyntheticInput& synth) {
     directional_.release_all(synth);
     inertia_.stop();
     inertia_confidence_ = 0.0f;
-    touch_sample_has_last_tick_ = false;
+    touch_timer_.reset();
     reset_mouse_edge_state();
     mouse_edge_requires_rearm_ = false;
     if (click_held_) {
@@ -426,7 +411,7 @@ void TouchpadMapper::reset_mouse_edge_state() {
     mouse_edge_target_motion_y_ = 0.0f;
     mouse_edge_smooth_motion_x_ = 0.0f;
     mouse_edge_smooth_motion_y_ = 0.0f;
-    mouse_edge_has_last_tick_ = false;
+    edge_timer_.reset();
 }
 
 } // namespace windeck::mapper

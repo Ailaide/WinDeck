@@ -5,8 +5,8 @@
 #include "modes/mouse_mode.h"
 #include "modes/directional_mode.h"
 #include "modes/inertia.h"
+#include "modes/tick_timer.h"
 #include "output/synthetic_input.h"
-#include <chrono>
 #include <cstdint>
 
 namespace windeck::mapper {
@@ -54,8 +54,7 @@ private:
     // decrements when speed < threshold. Inertia only fires if > 0.5 at lift-off.
     float inertia_confidence_ = 0.0f;
     // Time base for touch sample step (used for frame-independent speed/filters).
-    bool touch_sample_has_last_tick_ = false;
-    std::chrono::steady_clock::time_point touch_sample_last_tick_{};
+    modes::TickTimer touch_timer_;
 
     // Click state
     bool click_held_ = false;
@@ -78,8 +77,7 @@ private:
     float mouse_edge_smooth_motion_x_ = 0.0f;
     float mouse_edge_smooth_motion_y_ = 0.0f;
     bool mouse_edge_requires_rearm_ = false;
-    bool mouse_edge_has_last_tick_ = false;
-    std::chrono::steady_clock::time_point mouse_edge_last_tick_{};
+    modes::TickTimer edge_timer_;
 
     modes::MouseMode mouse_;
     modes::DirectionalMode directional_;

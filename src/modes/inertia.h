@@ -1,6 +1,6 @@
 #pragma once
 
-#include <chrono>
+#include "modes/tick_timer.h"
 
 namespace windeck::modes {
 
@@ -32,8 +32,7 @@ private:
     float friction_ = 0.95f;  // Per-tick multiplier (0.95 = gentle, 0.8 = heavy)
     float cutoff_ = 0.5f;     // Stop when velocity magnitude < cutoff
     bool active_ = false;
-    bool has_last_tick_ = false;
-    std::chrono::steady_clock::time_point last_tick_{};
+    TickTimer timer_;
 };
 
 } // namespace windeck::modes

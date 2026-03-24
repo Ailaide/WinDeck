@@ -3,16 +3,12 @@
 
 namespace windeck::mapper {
 
-namespace {
-constexpr float kReferenceTickSeconds = 1.0f / 250.0f;
-}
-
 void GyroMapper::apply_config(const config::GyroConfig& cfg) {
     mode_ = cfg.mode;
     activation_ = cfg.activation;
     sensitivity_x_ = cfg.sensitivity_x;
     sensitivity_y_ = cfg.sensitivity_y;
-    has_last_update_ = false;
+    timer_.reset();
     mouse_.set_sensitivity(1.0f); // Sensitivity handled here, not in MouseMode
 }
 
@@ -30,24 +26,15 @@ void GyroMapper::update(int16_t gyro_pitch, int16_t gyro_yaw, int16_t /*gyro_rol
                         int16_t& out_rx, int16_t& out_ry,
                         windeck::output::SyntheticInput& synth) {
     if (mode_ == config::GyroMode::Off) {
-        has_last_update_ = false;
+        timer_.reset();
         return;
     }
     if (!is_active(touching_left_pad, touching_right_pad)) {
-        has_last_update_ = false;
+        timer_.reset();
         return;
     }
 
-    auto now = std::chrono::steady_clock::now();
-    float step = 1.0f;
-    if (has_last_update_) {
-        float dt = std::chrono::duration<float>(now - last_update_).count();
-        if (dt > 0.0f) {
-            step = dt / kReferenceTickSeconds;
-        }
-    }
-    last_update_ = now;
-    has_last_update_ = true;
+    float step = timer_.step();
 
     // Neptune gyro: raw +/-32768 range, ~2000 dps full scale
     // Yaw = horizontal rotation (left/right aim), Pitch = vertical (up/down aim)

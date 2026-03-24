@@ -2,25 +2,12 @@
 
 namespace windeck::modes {
 
-namespace {
-constexpr float kReferenceTickSeconds = 1.0f / 250.0f;
-}
-
 void MouseMode::update_stick(float x, float y, windeck::output::SyntheticInput& synth) {
     // Stick range [-1, 1] -> mouse pixels at 250Hz reference rate.
     // Time scaling keeps cursor speed stable if input tick rate changes.
     constexpr float kBaseSpeed = 15.0f;
 
-    auto now = std::chrono::steady_clock::now();
-    float step = 1.0f;
-    if (has_last_stick_tick_) {
-        float dt = std::chrono::duration<float>(now - last_stick_tick_).count();
-        if (dt > 0.0f) {
-            step = dt / kReferenceTickSeconds;
-        }
-    }
-    last_stick_tick_ = now;
-    has_last_stick_tick_ = true;
+    float step = stick_timer_.step();
 
     float dx = x * kBaseSpeed * sensitivity_ * step;
     float dy = -y * kBaseSpeed * sensitivity_ * step; // Invert Y: stick up = cursor up (negative screen Y)
