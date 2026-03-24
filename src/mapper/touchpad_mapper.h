@@ -6,6 +6,7 @@
 #include "modes/directional_mode.h"
 #include "modes/inertia.h"
 #include "output/synthetic_input.h"
+#include <chrono>
 #include <cstdint>
 
 namespace windeck::mapper {
@@ -24,7 +25,7 @@ public:
 
     // Process touchpad input each frame.
     // pad_x, pad_y: absolute coordinates (-32768..32767), 0 when not touching
-    // pressure: 0-255
+    // pressure: 0-32767 (per hid-steam kernel driver)
     // touching: is finger on pad (from btn touch bit)
     void update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                 bool touching, windeck::output::SyntheticInput& synth);
@@ -52,12 +53,33 @@ private:
     // Inertia confidence accumulator (0..1). Increments when speed > threshold,
     // decrements when speed < threshold. Inertia only fires if > 0.5 at lift-off.
     float inertia_confidence_ = 0.0f;
+    // Time base for touch sample step (used for frame-independent speed/filters).
+    bool touch_sample_has_last_tick_ = false;
+    std::chrono::steady_clock::time_point touch_sample_last_tick_{};
 
     // Click state
     bool click_held_ = false;
 
     // Scroll accumulator for sub-pixel deltas
     float scroll_accum_ = 0.0f;
+
+    // Mouse edge-continue state.
+    bool mouse_edge_active_ = false;
+    float mouse_edge_entry_touch_x_ = 0.0f;
+    float mouse_edge_entry_touch_y_ = 0.0f;
+    float mouse_edge_prev_touch_x_ = 0.0f;
+    float mouse_edge_prev_touch_y_ = 0.0f;
+    float mouse_edge_entry_motion_x_ = 0.0f;
+    float mouse_edge_entry_motion_y_ = 0.0f;
+    float mouse_edge_speed_ = 0.0f;
+    float mouse_edge_angle_accum_ = 0.0f;
+    float mouse_edge_target_motion_x_ = 0.0f;
+    float mouse_edge_target_motion_y_ = 0.0f;
+    float mouse_edge_smooth_motion_x_ = 0.0f;
+    float mouse_edge_smooth_motion_y_ = 0.0f;
+    bool mouse_edge_requires_rearm_ = false;
+    bool mouse_edge_has_last_tick_ = false;
+    std::chrono::steady_clock::time_point mouse_edge_last_tick_{};
 
     modes::MouseMode mouse_;
     modes::DirectionalMode directional_;
@@ -67,8 +89,10 @@ private:
     uint8_t haptic_side_ = 0;  // 0=right, 1=left
 
     void click_haptic();
+    void edge_entry_haptic();
     void emit_action(const config::ButtonAction& action, bool pressed,
                       windeck::output::SyntheticInput& synth);
+    void reset_mouse_edge_state();
 };
 
 } // namespace windeck::mapper

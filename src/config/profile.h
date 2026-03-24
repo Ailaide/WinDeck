@@ -63,7 +63,7 @@ enum class TouchpadAccelerationPreset : uint8_t {
 
 struct TouchpadConfig {
     TouchpadMode mode = TouchpadMode::TrackpadInertia;
-    uint16_t     pressure_threshold = 50;   // 0-255
+    uint16_t     pressure_threshold = 50;   // 0-32767 (per hid-steam kernel driver)
     float        sensitivity = 1.0f;
     float        friction = 0.95f;          // For inertia mode
     TouchpadAccelerationPreset acceleration = TouchpadAccelerationPreset::Normal;
@@ -159,7 +159,7 @@ struct Profile {
             }
         }
 
-        // Right touchpad: trackpad with inertia, LMB click at ~half max pressure (~1000)
+        // Right touchpad: trackpad with inertia, LMB click at ~19% of max pressure (6144/32767)
         right_touchpad.mode = TouchpadMode::TrackpadInertia;
         right_touchpad.pressure_threshold = 6144;
         right_touchpad.click_action = {ActionType::MouseButton, 0};

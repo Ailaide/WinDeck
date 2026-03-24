@@ -25,6 +25,7 @@
 
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_emergency_restore{false};
+static std::atomic<bool> g_show_console{false};
 static windeck::neptune::NeptuneDevice* g_neptune = nullptr;
 
 static void signal_handler(int /*sig*/) {
@@ -196,10 +197,11 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
             xbox.update(result.xbox_report);
             synth.flush();
 
-            // Rumble passthrough (throttled)
-            static uint8_t rumble_tick = 0;
-            if (++rumble_tick >= 8) {
-                rumble_tick = 0;
+            // Rumble passthrough (time-throttled, frame-independent)
+            static auto next_rumble_send = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            if (now >= next_rumble_send) {
+                next_rumble_send = now + std::chrono::milliseconds(32);
                 auto rumble = xbox.get_rumble();
                 uint16_t left  = static_cast<uint16_t>(rumble.right_motor) * 257;
                 uint16_t right = static_cast<uint16_t>(rumble.left_motor) * 257;
@@ -208,11 +210,7 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
 
             // System buttons
             if (result.sys_events.steam_pressed) {
-                HWND console = GetConsoleWindow();
-                if (console) {
-                    ShowWindow(console, SW_RESTORE);
-                    SetForegroundWindow(console);
-                }
+                g_show_console.store(true, std::memory_order_relaxed);
             }
             if (result.sys_events.quick_access_pressed) {
                 spdlog::info("Quick Access button pressed, toggling touch keyboard");
@@ -229,6 +227,9 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
             }
             if (error_count >= kMaxConsecutiveErrors) {
                 spdlog::error("Too many consecutive HID errors, attempting reconnect...");
+                mapper.release_all(synth);
+                synth.release_all();
+                synth.flush();
                 device.close();
                 std::this_thread::sleep_for(std::chrono::seconds(1));
                 if (device.open()) {
@@ -284,6 +285,14 @@ static void setup_logging() {
 }
 
 int main() {
+    // Single-instance: prevent multiple copies
+    HANDLE single_mutex = CreateMutexW(nullptr, TRUE, L"Global\\WinDeck_SingleInstance");
+    if (!single_mutex || GetLastError() == ERROR_ALREADY_EXISTS) {
+        MessageBoxW(nullptr, L"WinDeck is already running.", L"WinDeck", MB_OK | MB_ICONINFORMATION);
+        if (single_mutex) CloseHandle(single_mutex);
+        return 0;
+    }
+
     setup_logging();
     spdlog::info("WinDeck v0.2.0 starting");
 
@@ -341,122 +350,134 @@ int main() {
 
     spdlog::info("WinDeck running. Type 'help' for commands, Ctrl+C to stop.");
 
-    // Main thread: console command loop
-    std::string line;
-    while (g_running.load(std::memory_order_relaxed)) {
-        // Non-blocking stdin check
-        HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
-        DWORD events = 0;
-        if (GetNumberOfConsoleInputEvents(hStdin, &events) && events > 0) {
-            INPUT_RECORD rec;
-            DWORD read_count;
-            PeekConsoleInputW(hStdin, &rec, 1, &read_count);
-            if (read_count > 0 && rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown
-                && rec.Event.KeyEvent.wVirtualKeyCode == VK_RETURN) {
-                // Enter pressed, read the line
-                std::getline(std::cin, line);
-                if (line.empty()) continue;
+    // Console command processing (runs on a separate blocking thread)
+    auto process_command = [&](const std::string& line) {
+        auto profile = config.get_profile();
+        bool changed = false;
 
-                auto profile = config.get_profile();
-                bool changed = false;
-
-                if (line == "help") {
-                    printf("Commands:\n");
-                    printf("  rpad trackpad|mouse|wasd|arrows|scroll|disabled\n");
-                    printf("  lpad trackpad|mouse|wasd|arrows|scroll|disabled\n");
-                    printf("  lstick stick|wasd|arrows|mouse\n");
-                    printf("  rstick stick|wasd|arrows|mouse\n");
-                    printf("  dpad dpad|wasd|arrows\n");
-                    printf("  gyro off|mouse|rstick\n");
-                    printf("  remap <button> xbox|keyboard|mouse <code>\n");
-                    printf("    buttons: A B X Y LB RB Start Back LS RS L4 L5 R4 R5\n");
-                    printf("  save   - save current profile\n");
-                    printf("  status - show current modes\n");
-                } else if (line.substr(0, 5) == "rpad " || line.substr(0, 5) == "lpad ") {
-                    bool is_right = (line[0] == 'r');
-                    auto& pad = is_right ? profile.right_touchpad : profile.left_touchpad;
-                    auto mode_str = line.substr(5);
-                    if (mode_str == "trackpad")     pad.mode = windeck::config::TouchpadMode::TrackpadInertia;
-                    else if (mode_str == "mouse")   pad.mode = windeck::config::TouchpadMode::Mouse;
-                    else if (mode_str == "wasd")    pad.mode = windeck::config::TouchpadMode::Wasd;
-                    else if (mode_str == "arrows")  pad.mode = windeck::config::TouchpadMode::Arrows;
-                    else if (mode_str == "scroll")  pad.mode = windeck::config::TouchpadMode::Scroll;
-                    else if (mode_str == "disabled") pad.mode = windeck::config::TouchpadMode::Disabled;
-                    else { printf("Unknown mode: %s\n", mode_str.c_str()); continue; }
-                    changed = true;
-                    printf("%cpad -> %s\n", line[0], mode_str.c_str());
-                } else if (line.substr(0, 7) == "lstick " || line.substr(0, 7) == "rstick ") {
-                    bool is_right = (line[0] == 'r');
-                    auto& stick = is_right ? profile.right_stick : profile.left_stick;
-                    auto mode_str = line.substr(7);
-                    if (mode_str == "stick")        stick.mode = windeck::config::StickMode::Stick;
-                    else if (mode_str == "wasd")    stick.mode = windeck::config::StickMode::Wasd;
-                    else if (mode_str == "arrows")  stick.mode = windeck::config::StickMode::Arrows;
-                    else if (mode_str == "mouse")   stick.mode = windeck::config::StickMode::Mouse;
-                    else { printf("Unknown mode: %s\n", mode_str.c_str()); continue; }
-                    changed = true;
-                    printf("%cstick -> %s\n", line[0], mode_str.c_str());
-                } else if (line.substr(0, 5) == "dpad ") {
-                    auto mode_str = line.substr(5);
-                    if (mode_str == "dpad")         profile.dpad.mode = windeck::config::DpadMode::Dpad;
-                    else if (mode_str == "wasd")    profile.dpad.mode = windeck::config::DpadMode::Wasd;
-                    else if (mode_str == "arrows")  profile.dpad.mode = windeck::config::DpadMode::Arrows;
-                    else { printf("Unknown mode: %s\n", mode_str.c_str()); continue; }
-                    changed = true;
-                    printf("dpad -> %s\n", mode_str.c_str());
-                } else if (line.substr(0, 5) == "gyro ") {
-                    auto mode_str = line.substr(5);
-                    if (mode_str == "off")           profile.gyro.mode = windeck::config::GyroMode::Off;
-                    else if (mode_str == "mouse")    profile.gyro.mode = windeck::config::GyroMode::Mouse;
-                    else if (mode_str == "rstick")   profile.gyro.mode = windeck::config::GyroMode::RightStick;
-                    else { printf("Unknown mode: %s\n", mode_str.c_str()); continue; }
-                    changed = true;
-                    printf("gyro -> %s\n", mode_str.c_str());
-                } else if (line == "save") {
-                    config.save_profile();
-                    printf("Profile saved.\n");
-                } else if (line == "status") {
-                    auto p = config.get_profile();
-                    const char* pad_modes[] = {"trackpad","mouse","wasd","arrows","radial","dpad","scroll","disabled"};
-                    const char* stick_modes[] = {"stick","wasd","arrows","mouse"};
-                    const char* dpad_modes[] = {"dpad","wasd","arrows"};
-                    const char* gyro_modes[] = {"off","rstick","mouse"};
-                    printf("rpad=%s lpad=%s lstick=%s rstick=%s dpad=%s gyro=%s\n",
-                        pad_modes[static_cast<int>(p.right_touchpad.mode)],
-                        pad_modes[static_cast<int>(p.left_touchpad.mode)],
-                        stick_modes[static_cast<int>(p.left_stick.mode)],
-                        stick_modes[static_cast<int>(p.right_stick.mode)],
-                        dpad_modes[static_cast<int>(p.dpad.mode)],
-                        gyro_modes[static_cast<int>(p.gyro.mode)]);
-                } else {
-                    printf("Unknown command. Type 'help'.\n");
-                }
-
-                if (changed) {
-                    config.set_profile(profile);
-                    mapper.apply_profile(profile);
-                }
-            } else {
-                // Consume non-Enter events to avoid buildup in input queue
-                if (read_count > 0) {
-                    ReadConsoleInputW(hStdin, &rec, 1, &read_count);
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
+        if (line == "help") {
+            printf("Commands:\n");
+            printf("  rpad trackpad|mouse|wasd|arrows|scroll|disabled\n");
+            printf("  lpad trackpad|mouse|wasd|arrows|scroll|disabled\n");
+            printf("  lstick stick|wasd|arrows|mouse\n");
+            printf("  rstick stick|wasd|arrows|mouse\n");
+            printf("  dpad dpad|wasd|arrows\n");
+            printf("  gyro off|mouse|rstick\n");
+            printf("  save   - save current profile\n");
+            printf("  status - show current modes\n");
+        } else if (line.substr(0, 5) == "rpad " || line.substr(0, 5) == "lpad ") {
+            bool is_right = (line[0] == 'r');
+            auto& pad = is_right ? profile.right_touchpad : profile.left_touchpad;
+            auto mode_str = line.substr(5);
+            if (mode_str == "trackpad")     pad.mode = windeck::config::TouchpadMode::TrackpadInertia;
+            else if (mode_str == "mouse")   pad.mode = windeck::config::TouchpadMode::Mouse;
+            else if (mode_str == "wasd")    pad.mode = windeck::config::TouchpadMode::Wasd;
+            else if (mode_str == "arrows")  pad.mode = windeck::config::TouchpadMode::Arrows;
+            else if (mode_str == "scroll")  pad.mode = windeck::config::TouchpadMode::Scroll;
+            else if (mode_str == "disabled") pad.mode = windeck::config::TouchpadMode::Disabled;
+            else { printf("Unknown mode: %s\n", mode_str.c_str()); return; }
+            changed = true;
+            printf("%cpad -> %s\n", line[0], mode_str.c_str());
+        } else if (line.substr(0, 7) == "lstick " || line.substr(0, 7) == "rstick ") {
+            bool is_right = (line[0] == 'r');
+            auto& stick = is_right ? profile.right_stick : profile.left_stick;
+            auto mode_str = line.substr(7);
+            if (mode_str == "stick")        stick.mode = windeck::config::StickMode::Stick;
+            else if (mode_str == "wasd")    stick.mode = windeck::config::StickMode::Wasd;
+            else if (mode_str == "arrows")  stick.mode = windeck::config::StickMode::Arrows;
+            else if (mode_str == "mouse")   stick.mode = windeck::config::StickMode::Mouse;
+            else { printf("Unknown mode: %s\n", mode_str.c_str()); return; }
+            changed = true;
+            printf("%cstick -> %s\n", line[0], mode_str.c_str());
+        } else if (line.substr(0, 5) == "dpad ") {
+            auto mode_str = line.substr(5);
+            if (mode_str == "dpad")         profile.dpad.mode = windeck::config::DpadMode::Dpad;
+            else if (mode_str == "wasd")    profile.dpad.mode = windeck::config::DpadMode::Wasd;
+            else if (mode_str == "arrows")  profile.dpad.mode = windeck::config::DpadMode::Arrows;
+            else { printf("Unknown mode: %s\n", mode_str.c_str()); return; }
+            changed = true;
+            printf("dpad -> %s\n", mode_str.c_str());
+        } else if (line.substr(0, 5) == "gyro ") {
+            auto mode_str = line.substr(5);
+            if (mode_str == "off")           profile.gyro.mode = windeck::config::GyroMode::Off;
+            else if (mode_str == "mouse")    profile.gyro.mode = windeck::config::GyroMode::Mouse;
+            else if (mode_str == "rstick")   profile.gyro.mode = windeck::config::GyroMode::RightStick;
+            else { printf("Unknown mode: %s\n", mode_str.c_str()); return; }
+            changed = true;
+            printf("gyro -> %s\n", mode_str.c_str());
+        } else if (line == "save") {
+            config.save_profile();
+            printf("Profile saved.\n");
+        } else if (line == "status") {
+            auto p = config.get_profile();
+            const char* pad_modes[] = {"trackpad","mouse","wasd","arrows","radial","dpad","scroll","disabled"};
+            const char* stick_modes[] = {"stick","wasd","arrows","mouse"};
+            const char* dpad_modes[] = {"dpad","wasd","arrows"};
+            const char* gyro_modes[] = {"off","rstick","mouse"};
+            auto safe = [](const char* arr[], size_t size, int idx) -> const char* {
+                return (idx >= 0 && static_cast<size_t>(idx) < size) ? arr[idx] : "?";
+            };
+            printf("rpad=%s lpad=%s lstick=%s rstick=%s dpad=%s gyro=%s\n",
+                safe(pad_modes, 8, static_cast<int>(p.right_touchpad.mode)),
+                safe(pad_modes, 8, static_cast<int>(p.left_touchpad.mode)),
+                safe(stick_modes, 4, static_cast<int>(p.left_stick.mode)),
+                safe(stick_modes, 4, static_cast<int>(p.right_stick.mode)),
+                safe(dpad_modes, 3, static_cast<int>(p.dpad.mode)),
+                safe(gyro_modes, 3, static_cast<int>(p.gyro.mode)));
         } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            printf("Unknown command. Type 'help'.\n");
         }
+
+        if (changed) {
+            config.set_profile(profile);
+            mapper.apply_profile(profile);
+        }
+    };
+
+    // Console reader thread: blocks on std::getline, dispatches commands
+    std::thread console_thread([&]() {
+        std::string line;
+        while (g_running.load(std::memory_order_relaxed)) {
+            if (!std::getline(std::cin, line)) break; // EOF or error
+            if (!line.empty()) {
+                process_command(line);
+            }
+        }
+    });
+
+    // Main thread: process UI events and wait for shutdown
+    while (g_running.load(std::memory_order_relaxed)) {
+        if (g_show_console.exchange(false, std::memory_order_relaxed)) {
+            HWND console = GetConsoleWindow();
+            if (console) {
+                // GetConsoleWindow() returns the ConPTY pseudo-window when
+                // Windows Terminal is the default console. The actual visible
+                // window is the root owner in the window hierarchy.
+                HWND target = GetAncestor(console, GA_ROOTOWNER);
+                if (!target) target = console;
+                if (GetForegroundWindow() == target) {
+                    ShowWindow(target, SW_MINIMIZE);
+                } else {
+                    if (IsIconic(target))
+                        ShowWindow(target, SW_RESTORE);
+                    SetForegroundWindow(target);
+                }
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
     spdlog::info("Shutting down...");
     spdlog::default_logger()->flush();
 
+    console_thread.detach(); // Blocked on getline — let it die with process
     input_thread.join();
     xbox.disconnect();
     g_neptune = nullptr;
-    neptune.close();  // Safe to call even if already closed by console_handler
+    neptune.close();
 
     spdlog::info("WinDeck stopped");
     spdlog::default_logger()->flush();
+    CloseHandle(single_mutex);
     return 0;
 }

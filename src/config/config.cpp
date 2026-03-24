@@ -2,6 +2,7 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <fstream>
+#include <algorithm>
 #include <shlobj.h>
 
 using json = nlohmann::json;
@@ -254,21 +255,21 @@ Profile profile_from_json(const std::string& json_str) {
     // Sticks
     auto parse_stick = [](const json& sj, StickConfig& s) {
         s.mode = parse_stick_mode(sj.value("mode", "stick"));
-        s.inner_deadzone = sj.value("inner_deadzone", 0.05f);
-        s.outer_deadzone = sj.value("outer_deadzone", 0.95f);
+        s.inner_deadzone = std::clamp(sj.value("inner_deadzone", 0.05f), 0.0f, 1.0f);
+        s.outer_deadzone = std::clamp(sj.value("outer_deadzone", 0.95f), 0.0f, 1.0f);
         s.curve = parse_curve(sj.value("curve", "linear"));
-        s.mouse_sensitivity = sj.value("mouse_sensitivity", 1.0f);
-        s.overlap = sj.value("overlap", 0.0f);
+        s.mouse_sensitivity = std::clamp(sj.value("mouse_sensitivity", 1.0f), 0.1f, 20.0f);
+        s.overlap = std::clamp(sj.value("overlap", 0.0f), 0.0f, 1.0f);
     };
     if (j.contains("left_stick"))  parse_stick(j["left_stick"], p.left_stick);
     if (j.contains("right_stick")) parse_stick(j["right_stick"], p.right_stick);
 
     // Triggers
     auto parse_trig = [](const json& tj, TriggerConfig& t) {
-        t.threshold = tj.value("threshold", 0.02f);
+        t.threshold = std::clamp(tj.value("threshold", 0.02f), 0.0f, 1.0f);
         if (tj.contains("button")) {
             t.has_button = true;
-            t.button_threshold = tj["button"].value("threshold", 0.8f);
+            t.button_threshold = std::clamp(tj["button"].value("threshold", 0.8f), 0.0f, 1.0f);
             if (tj["button"].contains("action")) {
                 t.button_action = action_from_json(tj["button"]["action"]);
             }
@@ -286,8 +287,8 @@ Profile profile_from_json(const std::string& json_str) {
     auto parse_pad = [](const json& pj, TouchpadConfig& t) {
         t.mode = parse_touchpad_mode(pj.value("mode", "trackpad_inertia"));
         t.pressure_threshold = pj.value("pressure_threshold", (uint16_t)50);
-        t.sensitivity = pj.value("sensitivity", 1.0f);
-        t.friction = pj.value("friction", 0.95f);
+        t.sensitivity = std::clamp(pj.value("sensitivity", 1.0f), 0.1f, 20.0f);
+        t.friction = std::clamp(pj.value("friction", 0.95f), 0.5f, 0.999f);
         t.acceleration = parse_touchpad_accel(pj.value("acceleration", "normal"));
         if (pj.contains("click_action")) {
             t.click_action = action_from_json(pj["click_action"]);
@@ -305,8 +306,8 @@ Profile profile_from_json(const std::string& json_str) {
     // Gyro
     if (j.contains("gyro")) {
         p.gyro.mode = parse_gyro_mode(j["gyro"].value("mode", "off"));
-        p.gyro.sensitivity_x = j["gyro"].value("sensitivity_x", 1.0f);
-        p.gyro.sensitivity_y = j["gyro"].value("sensitivity_y", 1.0f);
+        p.gyro.sensitivity_x = std::clamp(j["gyro"].value("sensitivity_x", 1.0f), 0.1f, 20.0f);
+        p.gyro.sensitivity_y = std::clamp(j["gyro"].value("sensitivity_y", 1.0f), 0.1f, 20.0f);
         auto act_str = j["gyro"].value("activation", "always");
         if (act_str == "touch_right_pad")     p.gyro.activation = GyroActivation::TouchRightPad;
         else if (act_str == "touch_left_pad") p.gyro.activation = GyroActivation::TouchLeftPad;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 namespace windeck::modes {
 
 // Exponential decay for trackpad inertia.
@@ -15,7 +17,7 @@ public:
     // Call when finger lifts off: begin inertia from last velocity.
     void begin();
 
-    // Call every frame (~4ms): decay velocity, return current delta.
+    // Call every update tick: applies time-based decay and returns current delta.
     // Returns true if still moving (above cutoff).
     bool tick(float& out_dx, float& out_dy);
 
@@ -30,6 +32,8 @@ private:
     float friction_ = 0.95f;  // Per-tick multiplier (0.95 = gentle, 0.8 = heavy)
     float cutoff_ = 0.5f;     // Stop when velocity magnitude < cutoff
     bool active_ = false;
+    bool has_last_tick_ = false;
+    std::chrono::steady_clock::time_point last_tick_{};
 };
 
 } // namespace windeck::modes

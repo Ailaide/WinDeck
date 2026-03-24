@@ -55,3 +55,15 @@ target_link_libraries(windeck PRIVATE
     setupapi
     urlmon
 )
+
+# Auto-deploy release binary to Steam Deck network share after successful build.
+if(WIN32)
+    set(WINDECK_DEPLOY_DIR "//STEAMDECK/Shared")
+    add_custom_command(TARGET windeck POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${WINDECK_DEPLOY_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:windeck>"
+            "${WINDECK_DEPLOY_DIR}/windeck.exe"
+        COMMENT "Deploying windeck.exe to ${WINDECK_DEPLOY_DIR}"
+    )
+endif()
