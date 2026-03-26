@@ -43,7 +43,7 @@ void GyroMapper::update(int16_t gyro_pitch, int16_t gyro_yaw, int16_t /*gyro_rol
 
     // Apply per-axis sensitivity
     float dx = yaw * sensitivity_x_;
-    float dy = -pitch * sensitivity_y_; // Invert: pitch up = aim up
+    float dy = pitch * sensitivity_y_;
 
     switch (mode_) {
         case config::GyroMode::RightStick: {
@@ -56,7 +56,7 @@ void GyroMapper::update(int16_t gyro_pitch, int16_t gyro_yaw, int16_t /*gyro_rol
             break;
         }
         case config::GyroMode::Mouse: {
-            constexpr float kGyroMouseScale = 20.0f;
+            constexpr float kGyroMouseScale = 40.0f;
             mouse_.update_delta(dx * kGyroMouseScale * step,
                                 dy * kGyroMouseScale * step, synth);
             break;
