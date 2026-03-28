@@ -18,6 +18,7 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <atomic>
 #include <csignal>
+#include "console/console_commands.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -350,98 +351,14 @@ int main() {
 
     spdlog::info("WinDeck running. Type 'help' for commands, Ctrl+C to stop.");
 
-    // Console command processing (runs on a separate blocking thread)
-    auto process_command = [&](const std::string& line) {
-        auto profile = config.get_profile();
-        bool changed = false;
+    windeck::console::ConsoleCommands console_commands(config, mapper);
 
-        if (line == "help") {
-            printf("Commands:\n");
-            printf("  rpad trackpad|mouse|wasd|arrows|scroll|disabled\n");
-            printf("  lpad trackpad|mouse|wasd|arrows|scroll|disabled\n");
-            printf("  lstick stick|wasd|arrows|mouse\n");
-            printf("  rstick stick|wasd|arrows|mouse\n");
-            printf("  dpad dpad|wasd|arrows\n");
-            printf("  gyro off|mouse|rstick\n");
-            printf("  save   - save current profile\n");
-            printf("  status - show current modes\n");
-        } else if (line.substr(0, 5) == "rpad " || line.substr(0, 5) == "lpad ") {
-            bool is_right = (line[0] == 'r');
-            auto& pad = is_right ? profile.right_touchpad : profile.left_touchpad;
-            auto mode_str = line.substr(5);
-            if (mode_str == "trackpad")     pad.mode = windeck::config::TouchpadMode::TrackpadInertia;
-            else if (mode_str == "mouse")   pad.mode = windeck::config::TouchpadMode::Mouse;
-            else if (mode_str == "wasd")    pad.mode = windeck::config::TouchpadMode::Wasd;
-            else if (mode_str == "arrows")  pad.mode = windeck::config::TouchpadMode::Arrows;
-            else if (mode_str == "scroll")  pad.mode = windeck::config::TouchpadMode::Scroll;
-            else if (mode_str == "disabled") pad.mode = windeck::config::TouchpadMode::Disabled;
-            else { printf("Unknown mode: %s\n", mode_str.c_str()); return; }
-            changed = true;
-            printf("%cpad -> %s\n", line[0], mode_str.c_str());
-        } else if (line.substr(0, 7) == "lstick " || line.substr(0, 7) == "rstick ") {
-            bool is_right = (line[0] == 'r');
-            auto& stick = is_right ? profile.right_stick : profile.left_stick;
-            auto mode_str = line.substr(7);
-            if (mode_str == "stick")        stick.mode = windeck::config::StickMode::Stick;
-            else if (mode_str == "wasd")    stick.mode = windeck::config::StickMode::Wasd;
-            else if (mode_str == "arrows")  stick.mode = windeck::config::StickMode::Arrows;
-            else if (mode_str == "mouse")   stick.mode = windeck::config::StickMode::Mouse;
-            else { printf("Unknown mode: %s\n", mode_str.c_str()); return; }
-            changed = true;
-            printf("%cstick -> %s\n", line[0], mode_str.c_str());
-        } else if (line.substr(0, 5) == "dpad ") {
-            auto mode_str = line.substr(5);
-            if (mode_str == "dpad")         profile.dpad.mode = windeck::config::DpadMode::Dpad;
-            else if (mode_str == "wasd")    profile.dpad.mode = windeck::config::DpadMode::Wasd;
-            else if (mode_str == "arrows")  profile.dpad.mode = windeck::config::DpadMode::Arrows;
-            else { printf("Unknown mode: %s\n", mode_str.c_str()); return; }
-            changed = true;
-            printf("dpad -> %s\n", mode_str.c_str());
-        } else if (line.substr(0, 5) == "gyro ") {
-            auto mode_str = line.substr(5);
-            if (mode_str == "off")           profile.gyro.mode = windeck::config::GyroMode::Off;
-            else if (mode_str == "mouse")    profile.gyro.mode = windeck::config::GyroMode::Mouse;
-            else if (mode_str == "rstick")   profile.gyro.mode = windeck::config::GyroMode::RightStick;
-            else { printf("Unknown mode: %s\n", mode_str.c_str()); return; }
-            changed = true;
-            printf("gyro -> %s\n", mode_str.c_str());
-        } else if (line == "save") {
-            config.save_profile();
-            printf("Profile saved.\n");
-        } else if (line == "status") {
-            auto p = config.get_profile();
-            const char* pad_modes[] = {"trackpad","mouse","wasd","arrows","radial","dpad","scroll","disabled"};
-            const char* stick_modes[] = {"stick","wasd","arrows","mouse"};
-            const char* dpad_modes[] = {"dpad","wasd","arrows"};
-            const char* gyro_modes[] = {"off","rstick","mouse"};
-            auto safe = [](const char* arr[], size_t size, int idx) -> const char* {
-                return (idx >= 0 && static_cast<size_t>(idx) < size) ? arr[idx] : "?";
-            };
-            printf("rpad=%s lpad=%s lstick=%s rstick=%s dpad=%s gyro=%s\n",
-                safe(pad_modes, 8, static_cast<int>(p.right_touchpad.mode)),
-                safe(pad_modes, 8, static_cast<int>(p.left_touchpad.mode)),
-                safe(stick_modes, 4, static_cast<int>(p.left_stick.mode)),
-                safe(stick_modes, 4, static_cast<int>(p.right_stick.mode)),
-                safe(dpad_modes, 3, static_cast<int>(p.dpad.mode)),
-                safe(gyro_modes, 3, static_cast<int>(p.gyro.mode)));
-        } else {
-            printf("Unknown command. Type 'help'.\n");
-        }
-
-        if (changed) {
-            config.set_profile(profile);
-            mapper.apply_profile(profile);
-        }
-    };
-
-    // Console reader thread: blocks on std::getline, dispatches commands
+    // Console reader thread. To remove: delete this block, the #include, and CMakeLists entry.
     std::thread console_thread([&]() {
         std::string line;
         while (g_running.load(std::memory_order_relaxed)) {
-            if (!std::getline(std::cin, line)) break; // EOF or error
-            if (!line.empty()) {
-                process_command(line);
-            }
+            if (!std::getline(std::cin, line)) break;
+            if (!line.empty()) console_commands.process(line);
         }
     });
 

@@ -124,7 +124,7 @@ static const char* gyro_mode_str(GyroMode m) {
     switch (m) {
         case GyroMode::RightStick: return "right_stick";
         case GyroMode::Mouse:      return "mouse";
-        default:                   return "off";
+        default:                   return "disabled";
     }
 }
 
@@ -204,6 +204,7 @@ std::string profile_to_json(const Profile& p) {
             {"pressure_threshold", t.pressure_threshold},
             {"sensitivity", t.sensitivity},
             {"friction", t.friction},
+            {"overlap", t.overlap},
             {"acceleration", touchpad_accel_str(t.acceleration)},
             {"click_action", action_to_json(t.click_action)}
         };
@@ -286,9 +287,10 @@ Profile profile_from_json(const std::string& json_str) {
     // Touchpads
     auto parse_pad = [](const json& pj, TouchpadConfig& t) {
         t.mode = parse_touchpad_mode(pj.value("mode", "trackpad_inertia"));
-        t.pressure_threshold = pj.value("pressure_threshold", (uint16_t)50);
+        t.pressure_threshold = pj.value("pressure_threshold", (uint16_t)6144);
         t.sensitivity = std::clamp(pj.value("sensitivity", 1.0f), 0.1f, 20.0f);
         t.friction = std::clamp(pj.value("friction", 0.95f), 0.5f, 0.999f);
+        t.overlap = std::clamp(pj.value("overlap", 0.5f), 0.0f, 1.0f);
         t.acceleration = parse_touchpad_accel(pj.value("acceleration", "normal"));
         if (pj.contains("click_action")) {
             t.click_action = action_from_json(pj["click_action"]);

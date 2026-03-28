@@ -112,8 +112,14 @@ void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
     mouse_edge_requires_rearm_ = false;
 
     switch (mode_) {
-        case config::TouchpadMode::Wasd:   directional_.set_keys_wasd(); break;
-        case config::TouchpadMode::Arrows: directional_.set_keys_arrows(); break;
+        case config::TouchpadMode::Wasd:
+            directional_.set_keys_wasd();
+            directional_.set_overlap(cfg.overlap);
+            break;
+        case config::TouchpadMode::Arrows:
+            directional_.set_keys_arrows();
+            directional_.set_overlap(cfg.overlap);
+            break;
         default: break;
     }
 }
@@ -123,8 +129,12 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
     if (mode_ == config::TouchpadMode::Disabled) return;
 
     // --- Click with hysteresis (pressure jitters) ---
+    // TrackpadInertia/Mouse: emit click_action + haptic.
+    // Wasd/Arrows: haptic only (directional keys are gated behind click_held_).
     if (mode_ == config::TouchpadMode::TrackpadInertia ||
-        mode_ == config::TouchpadMode::Mouse) {
+        mode_ == config::TouchpadMode::Mouse ||
+        mode_ == config::TouchpadMode::Wasd ||
+        mode_ == config::TouchpadMode::Arrows) {
         bool click_now;
         if (click_held_) {
             click_now = touching && (pressure >= pressure_threshold_ * 2 / 3);
@@ -133,10 +143,16 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
         }
 
         if (click_now && !click_held_) {
-            emit_action(click_action_, true, synth);
+            if (mode_ == config::TouchpadMode::TrackpadInertia ||
+                mode_ == config::TouchpadMode::Mouse) {
+                emit_action(click_action_, true, synth);
+            }
             click_haptic();
         } else if (!click_now && click_held_) {
-            emit_action(click_action_, false, synth);
+            if (mode_ == config::TouchpadMode::TrackpadInertia ||
+                mode_ == config::TouchpadMode::Mouse) {
+                emit_action(click_action_, false, synth);
+            }
             click_haptic();
         }
         click_held_ = click_now;
@@ -265,9 +281,13 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                     vel_x_ = 0.0f;
                     vel_y_ = 0.0f;
                     inertia_confidence_ = 0.0f;
-                    float fx = static_cast<float>(pad_x) / 32767.0f;
-                    float fy = static_cast<float>(pad_y) / 32767.0f;
-                    directional_.update_analog(fx, fy, 0.2f, synth);
+                    if (click_held_) {
+                        float fx = static_cast<float>(pad_x) / 32767.0f;
+                        float fy = static_cast<float>(pad_y) / 32767.0f;
+                        directional_.update_analog(fx, fy, 0.2f, synth);
+                    } else {
+                        directional_.release_all(synth);
+                    }
                     break;
                 }
 
@@ -384,8 +404,8 @@ void TouchpadMapper::emit_action(const config::ButtonAction& action, bool presse
 
 void TouchpadMapper::click_haptic() {
     if (!haptic_device_) return;
-    // 0xEA cmd=2 (click), side: 1=left 2=right, gain=4dB for stronger feel
-    uint8_t side = (haptic_side_ == 0) ? 2 : 1;
+    // 0xEA cmd=2 (click). Side encoding: 0=left, 1=right (hardware-verified; 2=both or invalid).
+    uint8_t side = (haptic_side_ == 0) ? 1 : 0;
     haptic_device_->send_haptic_cmd(side, 2, 0);
 }
 
@@ -393,9 +413,10 @@ void TouchpadMapper::edge_entry_haptic() {
     if (!haptic_device_) return;
     // Same 0xEA click haptic as touchpad click, but about one-third weaker.
     // 2/3 amplitude is ~ -3.5 dB; use -4 dB as nearest integer.
-    uint8_t side = (haptic_side_ == 0) ? 2 : 1;
+    uint8_t side = (haptic_side_ == 0) ? 1 : 0;
     haptic_device_->send_haptic_cmd(side, 2, -4);
 }
+
 
 void TouchpadMapper::reset_mouse_edge_state() {
     mouse_edge_active_ = false;

@@ -101,7 +101,7 @@ struct TriggerHapticReport {
     uint8_t report_id = 0x00;
     uint8_t command = kReportIdHapticCmd;   // 0xEA
     uint8_t data_len = 0x11;               // 17 bytes payload
-    uint8_t side;               // 0x01=L, 0x02=R, 0x03=Both
+    uint8_t side;               // 0x00=L, 0x01=R, 0x03=Both (hardware-verified)
     uint8_t cmd;                // 0=off, 1=tick, 2=click, 3=tone, 4=rumble
     uint8_t ui_intensity = 0;   // 0-4, 0=default
     int8_t  db_gain;            // dB gain

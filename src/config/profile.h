@@ -63,9 +63,10 @@ enum class TouchpadAccelerationPreset : uint8_t {
 
 struct TouchpadConfig {
     TouchpadMode mode = TouchpadMode::TrackpadInertia;
-    uint16_t     pressure_threshold = 50;   // 0-32767 (per hid-steam kernel driver)
+    uint16_t     pressure_threshold = 6144; // 0-32767 (per hid-steam kernel driver)
     float        sensitivity = 1.0f;
     float        friction = 0.95f;          // For inertia mode
+    float        overlap = 0.5f;            // 0-1, diagonal overlap for wasd/arrows modes
     TouchpadAccelerationPreset acceleration = TouchpadAccelerationPreset::Normal;
     ButtonAction click_action = {ActionType::MouseButton, 0}; // Default: LMB
     // Radial menu: 8 sectors, default keys 1-8 starting at 12 o'clock clockwise

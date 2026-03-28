@@ -37,6 +37,7 @@ add_executable(windeck
     src/modes/directional_mode.cpp
     src/modes/mouse_mode.cpp
     src/modes/inertia.cpp
+    src/console/console_commands.cpp
 )
 
 target_include_directories(windeck PRIVATE src)

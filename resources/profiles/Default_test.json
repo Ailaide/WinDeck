@@ -39,14 +39,14 @@
   "dpad": { "mode": "dpad" },
   "left_touchpad": {
     "mode": "trackpad_inertia",
-    "pressure_threshold": 50,
+    "pressure_threshold": 6144,
     "sensitivity": 1.0,
     "friction": 0.95,
     "click_action": { "type": "mouse", "code": 0 }
   },
   "right_touchpad": {
     "mode": "trackpad_inertia",
-    "pressure_threshold": 50,
+    "pressure_threshold": 6144,
     "sensitivity": 1.0,
     "friction": 0.95,
     "click_action": { "type": "mouse", "code": 0 }
