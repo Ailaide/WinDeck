@@ -1,10 +1,17 @@
 #include "mapper/mapper.h"
+#include "overlay/radial_overlay.h"
 #include "mapper/dead_zone.h"
 #include "neptune/neptune_report.h"
 #include <cstring>
 #include <algorithm>
 
 namespace windeck::mapper {
+
+void Mapper::set_overlay(windeck::overlay::RadialOverlay* overlay) {
+    std::unique_lock lock(mutex_);
+    left_touchpad_.set_overlay(overlay);
+    right_touchpad_.set_overlay(overlay);
+}
 
 void Mapper::set_device(windeck::neptune::NeptuneDevice* device) {
     left_touchpad_.set_haptic_device(device, 1);   // left grip

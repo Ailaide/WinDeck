@@ -6,8 +6,11 @@
 #include "modes/directional_mode.h"
 #include "modes/inertia.h"
 #include "modes/tick_timer.h"
+#include "modes/radial_menu_mode.h"
 #include "output/synthetic_input.h"
 #include <cstdint>
+
+namespace windeck::overlay { class RadialOverlay; }
 
 namespace windeck::mapper {
 
@@ -20,6 +23,7 @@ public:
         haptic_device_ = device;
         haptic_side_ = side;
     }
+    void set_overlay(windeck::overlay::RadialOverlay* overlay) { overlay_ = overlay; }
 
     void apply_config(const config::TouchpadConfig& cfg);
 
@@ -82,6 +86,8 @@ private:
     modes::MouseMode mouse_;
     modes::DirectionalMode directional_;
     modes::Inertia inertia_;
+    modes::RadialMenuMode  radial_menu_;
+    windeck::overlay::RadialOverlay* overlay_ = nullptr;
     const char* name_ = "pad";
     windeck::neptune::NeptuneDevice* haptic_device_ = nullptr;
     uint8_t haptic_side_ = 0;  // 0=right, 1=left

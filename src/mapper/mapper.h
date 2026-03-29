@@ -1,5 +1,7 @@
 #pragma once
 
+namespace windeck::overlay { class RadialOverlay; }
+
 #include "neptune/neptune_report.h"
 #include "neptune/neptune_device.h"
 #include "config/profile.h"
@@ -26,6 +28,7 @@ class Mapper {
 public:
     void set_device(windeck::neptune::NeptuneDevice* device);
     void apply_profile(const config::Profile& profile);
+    void set_overlay(windeck::overlay::RadialOverlay* overlay);
 
     MapResult map(const neptune::InputReport& input,
                   windeck::output::SyntheticInput& synth);

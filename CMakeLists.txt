@@ -37,6 +37,8 @@ add_executable(windeck
     src/modes/directional_mode.cpp
     src/modes/mouse_mode.cpp
     src/modes/inertia.cpp
+    src/modes/radial_menu_mode.cpp
+    src/overlay/radial_overlay.cpp
     src/console/console_commands.cpp
 )
 
@@ -55,6 +57,8 @@ target_link_libraries(windeck PRIVATE
     ViGEmClient
     setupapi
     urlmon
+    d2d1
+    dwrite
 )
 
 # Auto-deploy release binary to Steam Deck network share after successful build.

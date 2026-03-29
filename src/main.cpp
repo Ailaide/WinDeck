@@ -12,6 +12,7 @@
 #include "config/config.h"
 #include "hidhide/hidhide_client.h"
 #include "driver/driver_manager.h"
+#include "overlay/radial_overlay.h"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -331,6 +332,8 @@ int main() {
     windeck::mapper::Mapper mapper;
     windeck::output::SyntheticInput synth;
 
+    windeck::overlay::RadialOverlay overlay;
+    mapper.set_overlay(&overlay);
     mapper.set_device(&neptune);
 
     // Try loading saved profile, fall back to defaults

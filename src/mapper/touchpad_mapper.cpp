@@ -1,4 +1,5 @@
 #include "mapper/touchpad_mapper.h"
+#include "overlay/radial_overlay.h"
 #include <cmath>
 
 namespace windeck::mapper {
@@ -94,6 +95,47 @@ void rotate_vec(float x, float y, float angle, float& out_x, float& out_y) {
 
 }  // namespace
 
+static std::string radial_action_label(const config::ButtonAction& a) {
+    switch (a.type) {
+        case config::ActionType::Keyboard: {
+            uint16_t vk = a.code;
+            if (vk >= 'A' && vk <= 'Z') return std::string(1, static_cast<char>(vk));
+            if (vk >= '0' && vk <= '9') return std::string(1, static_cast<char>(vk));
+            if (vk >= VK_F1 && vk <= VK_F12) return "F" + std::to_string(vk - VK_F1 + 1);
+            switch (vk) {
+                case VK_SPACE:   return "Spc";
+                case VK_RETURN:  return "Ent";
+                case VK_ESCAPE:  return "Esc";
+                case VK_SHIFT: case VK_LSHIFT: return "Sft";
+                case VK_CONTROL: case VK_LCONTROL: return "Ctl";
+                case VK_MENU: case VK_LMENU: return "Alt";
+                case VK_TAB:     return "Tab";
+                case VK_BACK:    return "BS";
+                case VK_DELETE:  return "Del";
+                case VK_INSERT:  return "Ins";
+                case VK_HOME:    return "Hom";
+                case VK_END:     return "End";
+                case VK_PRIOR:   return "PUp";
+                case VK_NEXT:    return "PDn";
+                case VK_UP:      return "Up";
+                case VK_DOWN:    return "Dn";
+                case VK_LEFT:    return "Lft";
+                case VK_RIGHT:   return "Rgt";
+                default:         return "#" + std::to_string(vk);
+            }
+        }
+        case config::ActionType::MouseButton:
+            switch (a.code) { case 0: return "LMB"; case 1: return "RMB"; case 2: return "MMB"; default: return "MB"; }
+        case config::ActionType::MouseScroll:
+            return a.code ? "WhlU" : "WhlD";
+        case config::ActionType::XboxButton:
+            return "Xbox";
+        case config::ActionType::None:
+        default:
+            return "-";
+    }
+}
+
 void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
     mode_ = cfg.mode;
     acceleration_ = cfg.acceleration;
@@ -119,6 +161,14 @@ void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
         case config::TouchpadMode::Arrows:
             directional_.set_keys_arrows();
             directional_.set_overlap(cfg.overlap);
+            break;
+        case config::TouchpadMode::RadialMenu:
+            radial_menu_.set_keys(cfg.radial_keys);
+            if (overlay_) {
+                std::array<std::string, 8> lbl;
+                for (int i = 0; i < 8; i++) lbl[i] = radial_action_label(cfg.radial_keys[i]);
+                overlay_->set_labels(lbl);
+            }
             break;
         default: break;
     }
@@ -306,6 +356,18 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                     }
                     break;
 
+                case config::TouchpadMode::RadialMenu: {
+                    reset_mouse_edge_state();
+                    vel_x_ = 0.0f;
+                    vel_y_ = 0.0f;
+                    inertia_confidence_ = 0.0f;
+                    float nx = static_cast<float>(pad_x) / 32767.0f;
+                    float ny = static_cast<float>(pad_y) / 32767.0f;
+                    int s = radial_menu_.update(nx, ny, synth);
+                    if (overlay_) overlay_->update_sector(s);
+                    break;
+                }
+
                 default:
                     reset_mouse_edge_state();
                     vel_x_ = 0.0f;
@@ -315,6 +377,9 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
             }
         } else {
             touch_timer_.reset();
+            // First touch — show overlay if radial menu mode
+            if (mode_ == config::TouchpadMode::RadialMenu && overlay_)
+                overlay_->show(haptic_side_);
         }
 
         prev_x_ = pad_x;
@@ -337,6 +402,10 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
             if (mode_ == config::TouchpadMode::Wasd ||
                 mode_ == config::TouchpadMode::Arrows) {
                 directional_.release_all(synth);
+            }
+            if (mode_ == config::TouchpadMode::RadialMenu) {
+                radial_menu_.release_all(synth);
+                if (overlay_) overlay_->hide();
             }
         }
 
@@ -385,6 +454,10 @@ void TouchpadMapper::release_all(windeck::output::SyntheticInput& synth) {
     if (click_held_) {
         emit_action(click_action_, false, synth);
         click_held_ = false;
+    }
+    if (mode_ == config::TouchpadMode::RadialMenu) {
+        radial_menu_.release_all(synth);
+        if (overlay_) overlay_->hide();
     }
 }
 
