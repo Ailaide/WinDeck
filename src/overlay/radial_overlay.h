@@ -31,11 +31,11 @@ public:
     // Show overlay for given pad side (0=right, 1=left).
     void show(uint8_t side);
 
-    // Update highlighted sector (-1 = none). Call each frame while touching.
-    void update_sector(int sector);
+    // Update highlighted sector (-1 = none). Only acts if side matches current.
+    void update_sector(int sector, uint8_t side);
 
-    // Hide overlay.
-    void hide();
+    // Hide overlay. Only acts if side matches current.
+    void hide(uint8_t side);
 
 private:
     void thread_main();

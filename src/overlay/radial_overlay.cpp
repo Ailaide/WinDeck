@@ -32,11 +32,10 @@ RadialOverlay::~RadialOverlay() {
 void RadialOverlay::set_labels(const std::array<std::string, 8>& labels) {
     std::lock_guard lock(labels_mtx_);
     for (int i = 0; i < 8; i++) {
-        int n = MultiByteToWideChar(CP_UTF8, 0, labels[i].c_str(), -1, nullptr, 0);
-        if (n > 0) {
-            labels_[i].resize(n - 1);
-            MultiByteToWideChar(CP_UTF8, 0, labels[i].c_str(), -1, labels_[i].data(), n);
-        }
+        int len = static_cast<int>(labels[i].size());
+        int n = MultiByteToWideChar(CP_UTF8, 0, labels[i].c_str(), len, nullptr, 0);
+        labels_[i].resize(n);
+        MultiByteToWideChar(CP_UTF8, 0, labels[i].c_str(), len, labels_[i].data(), n);
     }
 }
 
@@ -45,12 +44,14 @@ void RadialOverlay::show(uint8_t side) {
     if (hwnd_) PostMessage(hwnd_, WM_OVR_SHOW, side, 0);
 }
 
-void RadialOverlay::update_sector(int sector) {
-    active_sector_.store(sector, std::memory_order_relaxed);
-    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+void RadialOverlay::update_sector(int sector, uint8_t side) {
+    if (side != side_.load(std::memory_order_relaxed)) return;
+    int prev = active_sector_.exchange(sector, std::memory_order_relaxed);
+    if (prev != sector && hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void RadialOverlay::hide() {
+void RadialOverlay::hide(uint8_t side) {
+    if (side != side_.load(std::memory_order_relaxed)) return;
     if (hwnd_) PostMessage(hwnd_, WM_OVR_HIDE, 0, 0);
 }
 

@@ -364,7 +364,7 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                     float nx = static_cast<float>(pad_x) / 32767.0f;
                     float ny = static_cast<float>(pad_y) / 32767.0f;
                     int s = radial_menu_.update(nx, ny, synth);
-                    if (overlay_) overlay_->update_sector(s);
+                    if (overlay_) overlay_->update_sector(s, haptic_side_);
                     break;
                 }
 
@@ -405,7 +405,7 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
             }
             if (mode_ == config::TouchpadMode::RadialMenu) {
                 radial_menu_.release_all(synth);
-                if (overlay_) overlay_->hide();
+                if (overlay_) overlay_->hide(haptic_side_);
             }
         }
 
@@ -457,7 +457,7 @@ void TouchpadMapper::release_all(windeck::output::SyntheticInput& synth) {
     }
     if (mode_ == config::TouchpadMode::RadialMenu) {
         radial_menu_.release_all(synth);
-        if (overlay_) overlay_->hide();
+        if (overlay_) overlay_->hide(haptic_side_);
     }
 }
 
