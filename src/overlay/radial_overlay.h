@@ -31,8 +31,8 @@ public:
     // Show overlay for given pad side (0=right, 1=left).
     void show(uint8_t side);
 
-    // Update highlighted sector (-1 = none). Only acts if side matches current.
-    void update_sector(int sector, uint8_t side);
+    // Update hovered sector + pressed state. Only acts if side matches current.
+    void update_sector(int hovered, bool pressed, uint8_t side);
 
     // Hide overlay. Only acts if side matches current.
     void hide(uint8_t side);
@@ -42,7 +42,7 @@ private:
     void on_show(uint8_t side);
     void on_hide();
     void on_paint();
-    void draw_wedge(int sector, bool active);
+    void draw_wedge(int sector, int hovered, bool pressed);
     void draw_label(int sector);
     HRESULT create_resources();
     void    release_resources();
@@ -59,6 +59,7 @@ private:
     ID2D1Factory*           factory_   = nullptr;
     ID2D1HwndRenderTarget*  rt_        = nullptr;
     ID2D1SolidColorBrush*   br_sector_ = nullptr;
+    ID2D1SolidColorBrush*   br_hover_  = nullptr;
     ID2D1SolidColorBrush*   br_active_ = nullptr;
     ID2D1SolidColorBrush*   br_center_ = nullptr;
     ID2D1SolidColorBrush*   br_text_   = nullptr;
@@ -67,6 +68,7 @@ private:
 
     // Shared state (input thread -> overlay thread)
     std::atomic<int>     active_sector_{-1};
+    std::atomic<bool>    pressed_{false};
     std::atomic<uint8_t> side_{0};
 
     mutable std::mutex          labels_mtx_;

@@ -36,7 +36,7 @@ void ConsoleCommands::process(const std::string& line) {
 
     if (cmd == "help") {
         printf("Modes:\n");
-        printf("  rpad|lpad trackpad|mouse|wasd|arrows|scroll|disabled\n");
+        printf("  rpad|lpad trackpad|mouse|wasd|arrows|radial|scroll|disabled\n");
         printf("  lstick|rstick stick|wasd|arrows|mouse\n");
         printf("  dpad dpad|wasd|arrows\n");
         printf("  gyro disabled|mouse|rstick\n");
@@ -77,6 +77,7 @@ void ConsoleCommands::process(const std::string& line) {
         else if (sub == "wasd")        { pad.mode = cfg::TouchpadMode::Wasd;            changed = true; printf("%cpad -> wasd\n",      cmd[0]); }
         else if (sub == "arrows")      { pad.mode = cfg::TouchpadMode::Arrows;          changed = true; printf("%cpad -> arrows\n",    cmd[0]); }
         else if (sub == "scroll")      { pad.mode = cfg::TouchpadMode::Scroll;          changed = true; printf("%cpad -> scroll\n",    cmd[0]); }
+        else if (sub == "radial")      { pad.mode = cfg::TouchpadMode::RadialMenu;      changed = true; printf("%cpad -> radial\n",   cmd[0]); }
         else if (sub == "disabled")    { pad.mode = cfg::TouchpadMode::Disabled;        changed = true; printf("%cpad -> disabled\n",  cmd[0]); }
         else if (sub == "sensitivity") {
             float v; if (!(ss >> v)) { printf("Missing value\n"); return; }

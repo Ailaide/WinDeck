@@ -184,7 +184,8 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
     if (mode_ == config::TouchpadMode::TrackpadInertia ||
         mode_ == config::TouchpadMode::Mouse ||
         mode_ == config::TouchpadMode::Wasd ||
-        mode_ == config::TouchpadMode::Arrows) {
+        mode_ == config::TouchpadMode::Arrows ||
+        mode_ == config::TouchpadMode::RadialMenu) {
         bool click_now;
         if (click_held_) {
             click_now = touching && (pressure >= pressure_threshold_ * 2 / 3);
@@ -363,8 +364,13 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
                     inertia_confidence_ = 0.0f;
                     float nx = static_cast<float>(pad_x) / 32767.0f;
                     float ny = static_cast<float>(pad_y) / 32767.0f;
-                    int s = radial_menu_.update(nx, ny, synth);
-                    if (overlay_) overlay_->update_sector(s, haptic_side_);
+                    int hovered = modes::RadialMenuMode::detect_sector(nx, ny);
+                    if (click_held_) {
+                        radial_menu_.update(nx, ny, synth);
+                    } else {
+                        radial_menu_.release_all(synth);
+                    }
+                    if (overlay_) overlay_->update_sector(hovered, click_held_, haptic_side_);
                     break;
                 }
 

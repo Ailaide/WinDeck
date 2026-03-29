@@ -44,10 +44,13 @@ void RadialOverlay::show(uint8_t side) {
     if (hwnd_) PostMessage(hwnd_, WM_OVR_SHOW, side, 0);
 }
 
-void RadialOverlay::update_sector(int sector, uint8_t side) {
+void RadialOverlay::update_sector(int hovered, bool pressed, uint8_t side) {
     if (side != side_.load(std::memory_order_relaxed)) return;
-    int prev = active_sector_.exchange(sector, std::memory_order_relaxed);
-    if (prev != sector && hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    int prev_hovered = active_sector_.exchange(hovered, std::memory_order_relaxed);
+    bool prev_pressed = pressed_.exchange(pressed, std::memory_order_relaxed);
+    if (prev_hovered != hovered || prev_pressed != pressed) {
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    }
 }
 
 void RadialOverlay::hide(uint8_t side) {
@@ -186,9 +189,10 @@ void RadialOverlay::on_paint() {
     rt_->BeginDraw();
     rt_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f)); // black = color key = transparent
 
-    int active = active_sector_.load(std::memory_order_relaxed);
+    int hovered = active_sector_.load(std::memory_order_relaxed);
+    bool pressed = pressed_.load(std::memory_order_relaxed);
 
-    for (int i = 0; i < 8; i++) draw_wedge(i, i == active);
+    for (int i = 0; i < 8; i++) draw_wedge(i, hovered, pressed);
 
     // Center dead-zone circle
     rt_->FillEllipse(
@@ -202,20 +206,24 @@ void RadialOverlay::on_paint() {
     ValidateRect(hwnd_, nullptr);
 }
 
-void RadialOverlay::draw_wedge(int sector, bool active) {
+void RadialOverlay::draw_wedge(int sector, int hovered, bool pressed) {
     if (!factory_ || !rt_) return;
 
     // D2D angle: 0 degrees=east, CW+. North = -90 degrees.
-    // Sector i center = -90 + sector*45 degrees.
-    // Sector i spans +-22.5 degrees around center, with 2 degree gap each side -> span = 41 degrees.
-    float gap   = 2.0f;
-    float start = -112.5f + sector * 45.0f + gap;
-    float end   = start + 45.0f - 2.0f * gap;
+    // Sector i spans +-22.5 degrees around center = -90 + sector*45.
+    // Parallel gaps: angular offset = asin(half_gap / radius) at each radius,
+    // so the linear gap width is constant (edges are parallel, not radiating).
+    constexpr float kHalfGap = 1.5f; // pixels — total gap between sectors = 3px
+    float boundary_start = -112.5f + sector * 45.0f;
+    float boundary_end   = boundary_start + 45.0f;
 
-    D2D1_POINT_2F p0 = polar(kCx, kCy, kInnerR, start);
-    D2D1_POINT_2F p1 = polar(kCx, kCy, kOuterR, start);
-    D2D1_POINT_2F p2 = polar(kCx, kCy, kOuterR, end);
-    D2D1_POINT_2F p3 = polar(kCx, kCy, kInnerR, end);
+    float inner_offset = asinf(kHalfGap / kInnerR) * 180.0f / kPi;
+    float outer_offset = asinf(kHalfGap / kOuterR) * 180.0f / kPi;
+
+    D2D1_POINT_2F p0 = polar(kCx, kCy, kInnerR, boundary_start + inner_offset);
+    D2D1_POINT_2F p1 = polar(kCx, kCy, kOuterR, boundary_start + outer_offset);
+    D2D1_POINT_2F p2 = polar(kCx, kCy, kOuterR, boundary_end   - outer_offset);
+    D2D1_POINT_2F p3 = polar(kCx, kCy, kInnerR, boundary_end   - inner_offset);
 
     ID2D1PathGeometry* geom = nullptr;
     if (FAILED(factory_->CreatePathGeometry(&geom))) return;
@@ -249,7 +257,9 @@ void RadialOverlay::draw_wedge(int sector, bool active) {
     sink->Close();
     sink->Release();
 
-    rt_->FillGeometry(geom, active ? br_active_ : br_sector_);
+    ID2D1SolidColorBrush* brush = br_sector_;
+    if (sector == hovered) brush = pressed ? br_active_ : br_hover_;
+    rt_->FillGeometry(geom, brush);
     geom->Release();
 }
 
@@ -295,6 +305,7 @@ HRESULT RadialOverlay::create_resources() {
         return rt_->CreateSolidColorBrush(D2D1::ColorF(r, g, b), out);
     };
     if (FAILED(mk(0.149f, 0.149f, 0.149f, &br_sector_))) return E_FAIL; // #262626
+    if (FAILED(mk(0.250f, 0.250f, 0.300f, &br_hover_)))  return E_FAIL; // subtle blue-gray
     if (FAILED(mk(0.902f, 0.600f, 0.098f, &br_active_))) return E_FAIL; // orange
     if (FAILED(mk(0.078f, 0.078f, 0.078f, &br_center_))) return E_FAIL; // near-black
     if (FAILED(mk(1.000f, 1.000f, 1.000f, &br_text_)))   return E_FAIL; // white
@@ -317,6 +328,7 @@ void RadialOverlay::release_resources() {
     rel(br_text_);
     rel(br_center_);
     rel(br_active_);
+    rel(br_hover_);
     rel(br_sector_);
     rel(rt_);
 }

@@ -23,11 +23,12 @@ public:
 
     int active_sector() const { return active_sector_; }
 
+    // Detect sector from normalized position without emitting keys.
+    static int detect_sector(float x, float y);
+
 private:
     std::array<config::ButtonAction, 8> keys_{};
     int active_sector_ = -1;
-
-    static int detect_sector(float x, float y);
     void emit(const config::ButtonAction& a, bool pressed,
               windeck::output::SyntheticInput& synth);
 };
