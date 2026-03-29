@@ -3,7 +3,6 @@
 #include "mapper/dead_zone.h"
 #include "neptune/neptune_report.h"
 #include <cstring>
-#include <algorithm>
 
 namespace windeck::mapper {
 
@@ -18,12 +17,15 @@ void Mapper::set_device(windeck::neptune::NeptuneDevice* device) {
     right_touchpad_.set_haptic_device(device, 0);  // right grip
 }
 
-void Mapper::apply_profile(const config::Profile& profile) {
+void Mapper::apply_profile(const config::Profile& profile,
+                           windeck::output::SyntheticInput& synth) {
     std::unique_lock lock(mutex_);
+    release_all_unlocked(synth);
+    synth.flush();
     button_mapper_.set_config(profile.buttons);
 
-    left_stick_.apply_config(profile.left_stick);
-    right_stick_.apply_config(profile.right_stick);
+    left_stick_.apply_config(profile.left_stick, profile.overlap);
+    right_stick_.apply_config(profile.right_stick, profile.overlap);
 
     left_trigger_.apply_config(profile.left_trigger);
     right_trigger_.apply_config(profile.right_trigger);
@@ -31,9 +33,9 @@ void Mapper::apply_profile(const config::Profile& profile) {
     dpad_.apply_config(profile.dpad);
 
     left_touchpad_.set_name("L-Pad");
-    left_touchpad_.apply_config(profile.left_touchpad);
+    left_touchpad_.apply_config(profile.left_touchpad, profile.overlap);
     right_touchpad_.set_name("R-Pad");
-    right_touchpad_.apply_config(profile.right_touchpad);
+    right_touchpad_.apply_config(profile.right_touchpad, profile.overlap);
 
     gyro_.apply_config(profile.gyro);
 }
@@ -41,6 +43,11 @@ void Mapper::apply_profile(const config::Profile& profile) {
 MapResult Mapper::map(const neptune::InputReport& input,
                        windeck::output::SyntheticInput& synth) {
     std::shared_lock lock(mutex_);
+    return map_unlocked(input, synth);
+}
+
+MapResult Mapper::map_unlocked(const neptune::InputReport& input,
+                                windeck::output::SyntheticInput& synth) {
     MapResult result;
     std::memset(&result.xbox_report, 0, sizeof(result.xbox_report));
 
@@ -71,32 +78,47 @@ MapResult Mapper::map(const neptune::InputReport& input,
                             input.right_pad_pressure, touching_right, synth);
 
     // Gyro
-    int16_t gyro_rx = 0, gyro_ry = 0;
-    gyro_.update(input.gyro_pitch, input.gyro_yaw, input.gyro_roll,
-                  touching_left, touching_right, gyro_rx, gyro_ry, synth);
-
-    // Sum gyro offset into right stick
-    if (gyro_rx != 0 || gyro_ry != 0) {
-        int32_t rx = static_cast<int32_t>(result.xbox_report.sThumbRX) + gyro_rx;
-        int32_t ry = static_cast<int32_t>(result.xbox_report.sThumbRY) + gyro_ry;
-        result.xbox_report.sThumbRX = static_cast<SHORT>(std::clamp(rx, (int32_t)-32768, (int32_t)32767));
-        result.xbox_report.sThumbRY = static_cast<SHORT>(std::clamp(ry, (int32_t)-32768, (int32_t)32767));
-    }
+    gyro_.update(input.gyro_pitch, input.gyro_yaw, input.gyro_roll, synth);
 
     return result;
 }
 
+MapResult Mapper::map_and_flush(const neptune::InputReport& input,
+                                windeck::output::SyntheticInput& synth) {
+    std::shared_lock lock(mutex_);
+    MapResult result = map_unlocked(input, synth);
+    left_touchpad_.tick_inertia(synth);
+    right_touchpad_.tick_inertia(synth);
+    synth.flush();
+    return result;
+}
+
 void Mapper::tick(windeck::output::SyntheticInput& synth) {
+    std::shared_lock lock(mutex_);
     left_touchpad_.tick_inertia(synth);
     right_touchpad_.tick_inertia(synth);
 }
 
+void Mapper::tick_and_flush(windeck::output::SyntheticInput& synth) {
+    std::shared_lock lock(mutex_);
+    left_touchpad_.tick_inertia(synth);
+    right_touchpad_.tick_inertia(synth);
+    synth.flush();
+}
+
 void Mapper::release_all(windeck::output::SyntheticInput& synth) {
+    std::shared_lock lock(mutex_);
+    release_all_unlocked(synth);
+}
+
+void Mapper::release_all_unlocked(windeck::output::SyntheticInput& synth) {
     left_stick_.release_all(synth);
     right_stick_.release_all(synth);
     dpad_.release_all(synth);
     left_touchpad_.release_all(synth);
     right_touchpad_.release_all(synth);
+    left_trigger_.release_all(synth);
+    right_trigger_.release_all(synth);
 }
 
 } // namespace windeck::mapper

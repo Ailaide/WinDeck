@@ -23,6 +23,7 @@ public:
     }
 
     uint8_t map(uint16_t raw, windeck::output::SyntheticInput& synth);
+    void release_all(windeck::output::SyntheticInput& synth);
 
 private:
     float threshold_ = 0.02f;

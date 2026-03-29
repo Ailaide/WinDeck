@@ -32,7 +32,7 @@ public:
     void send_rumble(uint16_t left_speed, uint16_t right_speed);
 
     // Send advanced haptic command (0xEA).
-    // side: 1=left, 2=right, 3=both. cmd: 0=off,1=tick,2=click,3=tone,4=rumble.
+    // side: 0=right, 1=left, 3=both. cmd: 0=off,1=tick,2=click,3=tone,4=rumble.
     void send_haptic_cmd(uint8_t side, uint8_t cmd, int8_t gain_db);
 
     // Stop all haptics.

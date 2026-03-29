@@ -113,7 +113,7 @@ bool HidHideClient::set_string_list(unsigned long ioctl, const std::vector<std::
 
 bool HidHideClient::hide_device(const std::wstring& device_instance_path) {
     std::vector<std::wstring> blacklist;
-    get_string_list(IOCTL_GET_BLACKLIST, blacklist);
+    if (!get_string_list(IOCTL_GET_BLACKLIST, blacklist)) return false;
 
     // Check if already in list
     for (auto& s : blacklist) {
@@ -126,7 +126,7 @@ bool HidHideClient::hide_device(const std::wstring& device_instance_path) {
 
 bool HidHideClient::unhide_device(const std::wstring& device_instance_path) {
     std::vector<std::wstring> blacklist;
-    get_string_list(IOCTL_GET_BLACKLIST, blacklist);
+    if (!get_string_list(IOCTL_GET_BLACKLIST, blacklist)) return false;
 
     blacklist.erase(
         std::remove_if(blacklist.begin(), blacklist.end(),
@@ -140,7 +140,7 @@ bool HidHideClient::unhide_device(const std::wstring& device_instance_path) {
 
 bool HidHideClient::whitelist_app(const std::wstring& app_full_path) {
     std::vector<std::wstring> whitelist;
-    get_string_list(IOCTL_GET_WHITELIST, whitelist);
+    if (!get_string_list(IOCTL_GET_WHITELIST, whitelist)) return false;
 
     for (auto& s : whitelist) {
         if (_wcsicmp(s.c_str(), app_full_path.c_str()) == 0) return true;
@@ -152,7 +152,7 @@ bool HidHideClient::whitelist_app(const std::wstring& app_full_path) {
 
 bool HidHideClient::unwhitelist_app(const std::wstring& app_full_path) {
     std::vector<std::wstring> whitelist;
-    get_string_list(IOCTL_GET_WHITELIST, whitelist);
+    if (!get_string_list(IOCTL_GET_WHITELIST, whitelist)) return false;
 
     whitelist.erase(
         std::remove_if(whitelist.begin(), whitelist.end(),

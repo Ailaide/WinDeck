@@ -13,6 +13,7 @@
 #include "hidhide/hidhide_client.h"
 #include "driver/driver_manager.h"
 #include "overlay/radial_overlay.h"
+#include "overlay/quick_access_overlay.h"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -27,7 +28,6 @@
 
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_emergency_restore{false};
-static std::atomic<bool> g_show_console{false};
 static windeck::neptune::NeptuneDevice* g_neptune = nullptr;
 
 static void signal_handler(int /*sig*/) {
@@ -176,14 +176,21 @@ static void open_touch_keyboard() {
 static void input_loop(windeck::neptune::NeptuneDevice& device,
                         windeck::output::VirtualXbox& xbox,
                         windeck::mapper::Mapper& mapper,
-                        windeck::output::SyntheticInput& synth) {
+                        windeck::output::SyntheticInput& synth,
+                        windeck::overlay::QuickAccessOverlay& qam,
+                        windeck::config::Config& config) {
 #ifdef _WIN32
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 #endif
 
-    windeck::neptune::InputReport input{};
+    using namespace windeck::neptune;
+
+    InputReport input{};
     uint64_t error_count = 0;
     constexpr int kMaxConsecutiveErrors = 50;
+
+    // Local edge detection for QAM navigation (separate from ButtonMapper)
+    uint32_t prev_nav_btn = 0;
 
     spdlog::info("Input loop started");
 
@@ -193,35 +200,72 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
         if (read_result > 0) {
             error_count = 0;
 
-            // Map and send to virtual Xbox + keyboard/mouse
-            auto result = mapper.map(input, synth);
-            mapper.tick(synth);  // Tick inertia every frame, not just on timeout
-            xbox.update(result.xbox_report);
-            synth.flush();
+            bool qam_open = qam.is_visible();
 
-            // Rumble passthrough (time-throttled, frame-independent)
-            static auto next_rumble_send = std::chrono::steady_clock::now();
-            auto now = std::chrono::steady_clock::now();
-            if (now >= next_rumble_send) {
-                next_rumble_send = now + std::chrono::milliseconds(32);
-                auto rumble = xbox.get_rumble();
-                uint16_t left  = static_cast<uint16_t>(rumble.right_motor) * 257;
-                uint16_t right = static_cast<uint16_t>(rumble.left_motor) * 257;
-                device.send_rumble(left, right);
-            }
+            if (qam_open) {
+                // Quick Access Menu is open — intercept D-pad/A/B/Steam for navigation,
+                // block all other input from reaching the game.
+                uint32_t rising = input.buttons & ~prev_nav_btn;
+                prev_nav_btn = input.buttons;
 
-            // System buttons
-            if (result.sys_events.steam_pressed) {
-                g_show_console.store(true, std::memory_order_relaxed);
-            }
-            if (result.sys_events.quick_access_pressed) {
-                spdlog::info("Quick Access button pressed, toggling touch keyboard");
-                std::thread(open_touch_keyboard).detach();
+                if (rising & btn::kDpadUp)    qam.navigate(0, -1);
+                if (rising & btn::kDpadDown)  qam.navigate(0, 1);
+                if (rising & btn::kDpadLeft)  qam.navigate(-1, 0);
+                if (rising & btn::kDpadRight) qam.navigate(1, 0);
+                if (rising & btn::kA)         qam.activate();
+                if (rising & btn::kB)         qam.hide();
+                if (rising & btn::kSteam)     qam.hide();
+
+                // Send zeroed report to Xbox — game sees no input
+                XUSB_REPORT zero{};
+                xbox.update(zero);
+
+            } else {
+                // Normal input path (map+tick+flush under one lock to prevent race with console thread)
+                auto result = mapper.map_and_flush(input, synth);
+                xbox.update(result.xbox_report);
+
+                // Rumble passthrough (time-throttled)
+                static auto next_rumble_send = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                if (now >= next_rumble_send) {
+                    next_rumble_send = now + std::chrono::milliseconds(32);
+                    auto rumble = xbox.get_rumble();
+                    uint16_t left  = static_cast<uint16_t>(rumble.right_motor) * 257;
+                    uint16_t right = static_cast<uint16_t>(rumble.left_motor) * 257;
+                    device.send_rumble(left, right);
+                }
+
+                // Steam button -> open Quick Access Menu
+                if (result.sys_events.steam_pressed) {
+                    mapper.release_all(synth);
+                    synth.release_all();
+                    synth.flush();
+                    XUSB_REPORT zero{};
+                    xbox.update(zero);
+
+                    qam.update_tiles(config.get_profile());
+                    qam.show();
+                    prev_nav_btn = input.buttons; // sync edge detection
+                }
+
+                // Quick Access button -> touch keyboard
+                if (result.sys_events.quick_access_pressed) {
+                    static std::atomic<bool> keyboard_in_flight{false};
+                    if (!keyboard_in_flight.exchange(true, std::memory_order_acq_rel)) {
+                        spdlog::info("Quick Access button pressed, toggling touch keyboard");
+                        std::thread([] {
+                            open_touch_keyboard();
+                            keyboard_in_flight.store(false, std::memory_order_release);
+                        }).detach();
+                    }
+                }
             }
         } else if (read_result == 0) {
-            // Timeout — tick inertia
-            mapper.tick(synth);
-            synth.flush();
+            // Timeout — tick inertia only when QAM is closed
+            if (!qam.is_visible()) {
+                mapper.tick_and_flush(synth);
+            }
         } else {
             error_count++;
             if (error_count == 1) {
@@ -250,7 +294,6 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
     synth.release_all();
 
     // Emergency restore: if console is closing, restore lizard mode from this thread
-    // (safe — no other thread is accessing the device now)
     if (g_emergency_restore.load(std::memory_order_relaxed)) {
         device.enable_lizard_mode();
         spdlog::info("Emergency lizard mode restore completed");
@@ -342,19 +385,23 @@ int main() {
         config.save_profile();  // Save default profile for future editing
     }
     auto profile = config.get_profile();
-    mapper.apply_profile(profile);
+    mapper.apply_profile(profile, synth);
     spdlog::info("Profile '{}' applied", profile.name);
+
+    windeck::overlay::QuickAccessOverlay qam(config, mapper, synth);
 
     // Run input loop
     std::thread input_thread(input_loop,
                               std::ref(neptune),
                               std::ref(xbox),
                               std::ref(mapper),
-                              std::ref(synth));
+                              std::ref(synth),
+                              std::ref(qam),
+                              std::ref(config));
 
     spdlog::info("WinDeck running. Type 'help' for commands, Ctrl+C to stop.");
 
-    windeck::console::ConsoleCommands console_commands(config, mapper);
+    windeck::console::ConsoleCommands console_commands(config, mapper, synth);
 
     // Console reader thread. To remove: delete this block, the #include, and CMakeLists entry.
     std::thread console_thread([&]() {
@@ -365,25 +412,8 @@ int main() {
         }
     });
 
-    // Main thread: process UI events and wait for shutdown
+    // Main thread: wait for shutdown
     while (g_running.load(std::memory_order_relaxed)) {
-        if (g_show_console.exchange(false, std::memory_order_relaxed)) {
-            HWND console = GetConsoleWindow();
-            if (console) {
-                // GetConsoleWindow() returns the ConPTY pseudo-window when
-                // Windows Terminal is the default console. The actual visible
-                // window is the root owner in the window hierarchy.
-                HWND target = GetAncestor(console, GA_ROOTOWNER);
-                if (!target) target = console;
-                if (GetForegroundWindow() == target) {
-                    ShowWindow(target, SW_MINIMIZE);
-                } else {
-                    if (IsIconic(target))
-                        ShowWindow(target, SW_RESTORE);
-                    SetForegroundWindow(target);
-                }
-            }
-        }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 

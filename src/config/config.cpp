@@ -124,16 +124,14 @@ static TouchpadAccelerationPreset parse_touchpad_accel(const std::string& s) {
 
 static const char* gyro_mode_str(GyroMode m) {
     switch (m) {
-        case GyroMode::RightStick: return "right_stick";
-        case GyroMode::Mouse:      return "mouse";
-        default:                   return "disabled";
+        case GyroMode::Mouse: return "mouse";
+        default:              return "disabled";
     }
 }
 
 static GyroMode parse_gyro_mode(const std::string& s) {
-    if (s == "right_stick") return GyroMode::RightStick;
-    if (s == "mouse")       return GyroMode::Mouse;
-    return GyroMode::Off;
+    if (s == "mouse") return GyroMode::Mouse;
+    return GyroMode::Disabled;
 }
 
 static const char* button_id_str(size_t i) {
@@ -175,8 +173,7 @@ std::string profile_to_json(const Profile& p) {
             {"inner_deadzone", s.inner_deadzone},
             {"outer_deadzone", s.outer_deadzone},
             {"curve", curve_str(s.curve)},
-            {"mouse_sensitivity", s.mouse_sensitivity},
-            {"overlap", s.overlap}
+            {"mouse_sensitivity", s.mouse_sensitivity}
         };
     };
     j["left_stick"] = stick_json(p.left_stick);
@@ -205,8 +202,7 @@ std::string profile_to_json(const Profile& p) {
             {"mode", touchpad_mode_str(t.mode)},
             {"pressure_threshold", t.pressure_threshold},
             {"sensitivity", t.sensitivity},
-            {"friction", t.friction},
-            {"overlap", t.overlap},
+            {"inertia", t.inertia},
             {"acceleration", touchpad_accel_str(t.acceleration)},
             {"click_action", action_to_json(t.click_action)}
         };
@@ -221,19 +217,14 @@ std::string profile_to_json(const Profile& p) {
     j["right_touchpad"] = pad_json(p.right_touchpad);
 
     // Gyro
-    auto gyro_activation_str = [](GyroActivation a) -> std::string {
-        switch (a) {
-            case GyroActivation::TouchRightPad: return "touch_right_pad";
-            case GyroActivation::TouchLeftPad:  return "touch_left_pad";
-            default: return "always";
-        }
-    };
     j["gyro"] = {
         {"mode", gyro_mode_str(p.gyro.mode)},
         {"sensitivity_x", p.gyro.sensitivity_x},
-        {"sensitivity_y", p.gyro.sensitivity_y},
-        {"activation", gyro_activation_str(p.gyro.activation)}
+        {"sensitivity_y", p.gyro.sensitivity_y}
     };
+
+    // Global
+    j["overlap"] = p.overlap;
 
     return j.dump(2);
 }
@@ -262,7 +253,6 @@ Profile profile_from_json(const std::string& json_str) {
         s.outer_deadzone = std::clamp(sj.value("outer_deadzone", 0.95f), 0.0f, 1.0f);
         s.curve = parse_curve(sj.value("curve", "linear"));
         s.mouse_sensitivity = std::clamp(sj.value("mouse_sensitivity", 1.0f), 0.1f, 20.0f);
-        s.overlap = std::clamp(sj.value("overlap", 0.0f), 0.0f, 1.0f);
     };
     if (j.contains("left_stick"))  parse_stick(j["left_stick"], p.left_stick);
     if (j.contains("right_stick")) parse_stick(j["right_stick"], p.right_stick);
@@ -291,8 +281,7 @@ Profile profile_from_json(const std::string& json_str) {
         t.mode = parse_touchpad_mode(pj.value("mode", "trackpad_inertia"));
         t.pressure_threshold = pj.value("pressure_threshold", (uint16_t)6144);
         t.sensitivity = std::clamp(pj.value("sensitivity", 1.0f), 0.1f, 20.0f);
-        t.friction = std::clamp(pj.value("friction", 0.95f), 0.5f, 0.999f);
-        t.overlap = std::clamp(pj.value("overlap", 0.5f), 0.0f, 1.0f);
+        t.inertia = std::clamp(pj.value("inertia", 0.95f), 0.5f, 0.999f);
         t.acceleration = parse_touchpad_accel(pj.value("acceleration", "normal"));
         if (pj.contains("click_action")) {
             t.click_action = action_from_json(pj["click_action"]);
@@ -309,14 +298,13 @@ Profile profile_from_json(const std::string& json_str) {
 
     // Gyro
     if (j.contains("gyro")) {
-        p.gyro.mode = parse_gyro_mode(j["gyro"].value("mode", "off"));
+        p.gyro.mode = parse_gyro_mode(j["gyro"].value("mode", "disabled"));
         p.gyro.sensitivity_x = std::clamp(j["gyro"].value("sensitivity_x", 1.0f), 0.1f, 20.0f);
         p.gyro.sensitivity_y = std::clamp(j["gyro"].value("sensitivity_y", 1.0f), 0.1f, 20.0f);
-        auto act_str = j["gyro"].value("activation", "always");
-        if (act_str == "touch_right_pad")     p.gyro.activation = GyroActivation::TouchRightPad;
-        else if (act_str == "touch_left_pad") p.gyro.activation = GyroActivation::TouchLeftPad;
-        else                                  p.gyro.activation = GyroActivation::Always;
     }
+
+    // Global
+    p.overlap = std::clamp(j.value("overlap", 0.5f), 0.0f, 1.0f);
 
     return p;
 }

@@ -31,6 +31,7 @@ bool NeptuneDevice::open() {
         hid_free_enumeration(devs);
     } else {
         spdlog::error("No Neptune HID devices found (VID={:#06x}, PID={:#06x})", kVendorId, kProductId);
+        hid_exit();
         return false;
     }
 
@@ -49,12 +50,14 @@ bool NeptuneDevice::open() {
 
     if (target_path.empty()) {
         spdlog::error("No vendor-specific HID interface found for Neptune controller");
+        hid_exit();
         return false;
     }
 
     device_ = hid_open_path(target_path.c_str());
     if (!device_) {
         spdlog::error("Failed to open Neptune controller at path: {}", target_path);
+        hid_exit();
         return false;
     }
 

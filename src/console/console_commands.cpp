@@ -7,8 +7,9 @@ namespace windeck::console {
 
 namespace cfg = windeck::config;
 
-ConsoleCommands::ConsoleCommands(cfg::Config& config, windeck::mapper::Mapper& mapper)
-    : config_(config), mapper_(mapper) {}
+ConsoleCommands::ConsoleCommands(cfg::Config& config, windeck::mapper::Mapper& mapper,
+                                 windeck::output::SyntheticInput& synth)
+    : config_(config), mapper_(mapper), synth_(synth) {}
 
 static bool parse_u16(const std::string& s, uint16_t& out) {
     try { out = static_cast<uint16_t>(std::stoul(s, nullptr, 0)); return true; }
@@ -39,7 +40,7 @@ void ConsoleCommands::process(const std::string& line) {
         printf("  rpad|lpad trackpad|mouse|wasd|arrows|radial|scroll|disabled\n");
         printf("  lstick|rstick stick|wasd|arrows|mouse\n");
         printf("  dpad dpad|wasd|arrows\n");
-        printf("  gyro disabled|mouse|rstick\n");
+        printf("  gyro disabled|mouse\n");
         printf("Buttons:\n");
         printf("  button <name> xbox|key|mouse <code>   (name: A B X Y LB RB Start Back LS RS L4 L5 R4 R5 LPadClick RPadClick)\n");
         printf("  button <name> scroll 1|0              (1=scroll up, 0=scroll down, one tick per press)\n");
@@ -52,16 +53,17 @@ void ConsoleCommands::process(const std::string& line) {
         printf("Stick params:\n");
         printf("  lstick|rstick inner_deadzone|outer_deadzone <0.0-1.0>\n");
         printf("  lstick|rstick curve linear|quadratic|inverse_quadratic\n");
-        printf("  lstick|rstick mouse_sensitivity|overlap <value>\n");
+        printf("  lstick|rstick mouse_sensitivity <value>\n");
         printf("Pad params:\n");
-        printf("  lpad|rpad sensitivity|friction|overlap <value>\n");
+        printf("  lpad|rpad sensitivity|inertia <value>\n");
         printf("  lpad|rpad pressure <0-32767>\n");
         printf("  lpad|rpad acceleration off|normal|strong\n");
         printf("  lpad|rpad click xbox|key|mouse <code>\n");
         printf("  lpad|rpad click none\n");
+        printf("Global params:\n");
+        printf("  overlap <0.0-1.0>\n");
         printf("Gyro params:\n");
         printf("  gyro sensitivity_x|sensitivity_y <value>\n");
-        printf("  gyro activation always|touch_right|touch_left\n");
         printf("Other:\n");
         printf("  load <profile_name>  - load and apply profile from disk\n");
         printf("  name <profile_name>  - rename current profile\n");
@@ -83,14 +85,10 @@ void ConsoleCommands::process(const std::string& line) {
             float v; if (!(ss >> v)) { printf("Missing value\n"); return; }
             pad.sensitivity = std::clamp(v, 0.1f, 20.0f); changed = true;
             printf("%cpad sensitivity -> %.2f\n", cmd[0], pad.sensitivity);
-        } else if (sub == "friction") {
+        } else if (sub == "inertia") {
             float v; if (!(ss >> v)) { printf("Missing value\n"); return; }
-            pad.friction = std::clamp(v, 0.5f, 0.999f); changed = true;
-            printf("%cpad friction -> %.3f\n", cmd[0], pad.friction);
-        } else if (sub == "overlap") {
-            float v; if (!(ss >> v)) { printf("Missing value\n"); return; }
-            pad.overlap = std::clamp(v, 0.0f, 1.0f); changed = true;
-            printf("%cpad overlap -> %.2f\n", cmd[0], pad.overlap);
+            pad.inertia = std::clamp(v, 0.5f, 0.999f); changed = true;
+            printf("%cpad friction -> %.3f\n", cmd[0], pad.inertia);
         } else if (sub == "pressure") {
             uint16_t v; std::string vs; ss >> vs;
             if (!parse_u16(vs, v)) { printf("Invalid value\n"); return; }
@@ -138,11 +136,12 @@ void ConsoleCommands::process(const std::string& line) {
             float v; if (!(ss >> v)) { printf("Missing value\n"); return; }
             stick.mouse_sensitivity = std::clamp(v, 0.1f, 20.0f); changed = true;
             printf("%cstick mouse_sensitivity -> %.2f\n", cmd[0], stick.mouse_sensitivity);
-        } else if (sub == "overlap") {
-            float v; if (!(ss >> v)) { printf("Missing value\n"); return; }
-            stick.overlap = std::clamp(v, 0.0f, 1.0f); changed = true;
-            printf("%cstick overlap -> %.2f\n", cmd[0], stick.overlap);
         } else { printf("Unknown: %s\n", sub.c_str()); return; }
+
+    } else if (cmd == "overlap") {
+        float v; if (!(ss >> v)) { printf("Missing value\n"); return; }
+        profile.overlap = std::clamp(v, 0.0f, 1.0f); changed = true;
+        printf("overlap -> %.2f\n", profile.overlap);
 
     } else if (cmd == "dpad") {
         std::string sub; ss >> sub;
@@ -153,9 +152,8 @@ void ConsoleCommands::process(const std::string& line) {
 
     } else if (cmd == "gyro") {
         std::string sub; ss >> sub;
-        if      (sub == "disabled") { profile.gyro.mode = cfg::GyroMode::Off;       changed = true; printf("gyro -> disabled\n"); }
-        else if (sub == "mouse")    { profile.gyro.mode = cfg::GyroMode::Mouse;      changed = true; printf("gyro -> mouse\n"); }
-        else if (sub == "rstick")   { profile.gyro.mode = cfg::GyroMode::RightStick; changed = true; printf("gyro -> rstick\n"); }
+        if      (sub == "disabled") { profile.gyro.mode = cfg::GyroMode::Disabled; changed = true; printf("gyro -> disabled\n"); }
+        else if (sub == "mouse")    { profile.gyro.mode = cfg::GyroMode::Mouse;    changed = true; printf("gyro -> mouse\n"); }
         else if (sub == "sensitivity_x") {
             float v; if (!(ss >> v)) { printf("Missing value\n"); return; }
             profile.gyro.sensitivity_x = std::clamp(v, 0.1f, 20.0f); changed = true;
@@ -164,13 +162,6 @@ void ConsoleCommands::process(const std::string& line) {
             float v; if (!(ss >> v)) { printf("Missing value\n"); return; }
             profile.gyro.sensitivity_y = std::clamp(v, 0.1f, 20.0f); changed = true;
             printf("gyro sensitivity_y -> %.2f\n", profile.gyro.sensitivity_y);
-        } else if (sub == "activation") {
-            std::string a; ss >> a;
-            if      (a == "always")      { profile.gyro.activation = cfg::GyroActivation::Always;        changed = true; }
-            else if (a == "touch_right") { profile.gyro.activation = cfg::GyroActivation::TouchRightPad; changed = true; }
-            else if (a == "touch_left")  { profile.gyro.activation = cfg::GyroActivation::TouchLeftPad;  changed = true; }
-            else { printf("Unknown: %s (always|touch_right|touch_left)\n", a.c_str()); return; }
-            printf("gyro activation -> %s\n", a.c_str());
         } else { printf("Unknown: %s\n", sub.c_str()); return; }
 
     } else if (cmd == "button") {
@@ -228,7 +219,7 @@ void ConsoleCommands::process(const std::string& line) {
             return;
         }
         auto loaded = config_.get_profile();
-        mapper_.apply_profile(loaded);
+        mapper_.apply_profile(loaded, synth_);
         printf("Profile '%s' loaded and applied.\n", profile_name.c_str());
         return;
 
@@ -247,8 +238,7 @@ void ConsoleCommands::process(const std::string& line) {
         const char* pad_modes[]   = {"trackpad","mouse","wasd","arrows","radial","dpad","scroll","disabled"};
         const char* stick_modes[] = {"stick","wasd","arrows","mouse"};
         const char* dpad_modes[]  = {"dpad","wasd","arrows"};
-        const char* gyro_modes[]  = {"disabled","rstick","mouse"};
-        const char* gyro_act[]    = {"always","touch_right","touch_left"};
+        const char* gyro_modes[]  = {"disabled","mouse"};
         const char* accel[]       = {"off","normal","strong"};
         const char* curve[]       = {"linear","quadratic","inverse_quadratic"};
         auto s = [](const char* arr[], size_t n, int i) -> const char* {
@@ -257,30 +247,30 @@ void ConsoleCommands::process(const std::string& line) {
         printf("rpad=%s lpad=%s\n",
             s(pad_modes,8,static_cast<int>(p.right_touchpad.mode)),
             s(pad_modes,8,static_cast<int>(p.left_touchpad.mode)));
-        printf("  rpad: sensitivity=%.2f friction=%.3f overlap=%.2f pressure=%u accel=%s\n",
-            p.right_touchpad.sensitivity, p.right_touchpad.friction,
-            p.right_touchpad.overlap, p.right_touchpad.pressure_threshold,
+        printf("  rpad: sensitivity=%.2f friction=%.3f pressure=%u accel=%s\n",
+            p.right_touchpad.sensitivity, p.right_touchpad.inertia,
+            p.right_touchpad.pressure_threshold,
             s(accel,3,static_cast<int>(p.right_touchpad.acceleration)));
-        printf("  lpad: sensitivity=%.2f friction=%.3f overlap=%.2f pressure=%u accel=%s\n",
-            p.left_touchpad.sensitivity, p.left_touchpad.friction,
-            p.left_touchpad.overlap, p.left_touchpad.pressure_threshold,
+        printf("  lpad: sensitivity=%.2f friction=%.3f pressure=%u accel=%s\n",
+            p.left_touchpad.sensitivity, p.left_touchpad.inertia,
+            p.left_touchpad.pressure_threshold,
             s(accel,3,static_cast<int>(p.left_touchpad.acceleration)));
         printf("lstick=%s rstick=%s\n",
             s(stick_modes,4,static_cast<int>(p.left_stick.mode)),
             s(stick_modes,4,static_cast<int>(p.right_stick.mode)));
-        printf("  lstick: inner=%.2f outer=%.2f curve=%s mouse_sens=%.2f overlap=%.2f\n",
+        printf("  lstick: inner=%.2f outer=%.2f curve=%s mouse_sens=%.2f\n",
             p.left_stick.inner_deadzone, p.left_stick.outer_deadzone,
             s(curve,3,static_cast<int>(p.left_stick.curve)),
-            p.left_stick.mouse_sensitivity, p.left_stick.overlap);
-        printf("  rstick: inner=%.2f outer=%.2f curve=%s mouse_sens=%.2f overlap=%.2f\n",
+            p.left_stick.mouse_sensitivity);
+        printf("  rstick: inner=%.2f outer=%.2f curve=%s mouse_sens=%.2f\n",
             p.right_stick.inner_deadzone, p.right_stick.outer_deadzone,
             s(curve,3,static_cast<int>(p.right_stick.curve)),
-            p.right_stick.mouse_sensitivity, p.right_stick.overlap);
-        printf("dpad=%s  gyro=%s activation=%s sens_x=%.2f sens_y=%.2f\n",
+            p.right_stick.mouse_sensitivity);
+        printf("dpad=%s  gyro=%s sens_x=%.2f sens_y=%.2f\n",
             s(dpad_modes,3,static_cast<int>(p.dpad.mode)),
-            s(gyro_modes,3,static_cast<int>(p.gyro.mode)),
-            s(gyro_act,3,static_cast<int>(p.gyro.activation)),
+            s(gyro_modes,2,static_cast<int>(p.gyro.mode)),
             p.gyro.sensitivity_x, p.gyro.sensitivity_y);
+        printf("overlap=%.2f\n", p.overlap);
         printf("ltrigger: threshold=%.3f  rtrigger: threshold=%.3f\n",
             p.left_trigger.threshold, p.right_trigger.threshold);
 
@@ -290,7 +280,7 @@ void ConsoleCommands::process(const std::string& line) {
 
     if (changed) {
         config_.set_profile(profile);
-        mapper_.apply_profile(profile);
+        mapper_.apply_profile(profile, synth_);
     }
 }
 

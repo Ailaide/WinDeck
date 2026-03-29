@@ -10,7 +10,7 @@ namespace windeck::mapper {
 
 class StickMapper {
 public:
-    void apply_config(const config::StickConfig& cfg);
+    void apply_config(const config::StickConfig& cfg, float overlap);
 
     void map(int16_t raw_x, int16_t raw_y,
              int16_t& out_x, int16_t& out_y,

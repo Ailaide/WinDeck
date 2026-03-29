@@ -1,8 +1,6 @@
 #include "overlay/radial_overlay.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
-#include <chrono>
-#include <thread>
 
 namespace windeck::overlay {
 
@@ -18,15 +16,9 @@ static D2D1_POINT_2F polar(float cx, float cy, float r, float deg) {
     return {cx + r * cosf(rad), cy + r * sinf(rad)};
 }
 
-RadialOverlay::RadialOverlay() {
-    thread_ = std::thread(&RadialOverlay::thread_main, this);
-    while (!initialized_.load(std::memory_order_acquire))
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-}
-
-RadialOverlay::~RadialOverlay() {
-    if (hwnd_) PostMessage(hwnd_, WM_CLOSE, 0, 0);
-    if (thread_.joinable()) thread_.join();
+RadialOverlay::RadialOverlay()
+    : OverlayBase(L"WinDeckRadialOverlay", kWidth, kHeight) {
+    start();
 }
 
 void RadialOverlay::set_labels(const std::array<std::string, 8>& labels) {
@@ -41,131 +33,25 @@ void RadialOverlay::set_labels(const std::array<std::string, 8>& labels) {
 
 void RadialOverlay::show(uint8_t side) {
     side_.store(side, std::memory_order_relaxed);
-    if (hwnd_) PostMessage(hwnd_, WM_OVR_SHOW, side, 0);
+    post_show(side);
 }
 
 void RadialOverlay::update_sector(int hovered, bool pressed, uint8_t side) {
     if (side != side_.load(std::memory_order_relaxed)) return;
     int prev_hovered = active_sector_.exchange(hovered, std::memory_order_relaxed);
     bool prev_pressed = pressed_.exchange(pressed, std::memory_order_relaxed);
-    if (prev_hovered != hovered || prev_pressed != pressed) {
-        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-    }
+    if (prev_hovered != hovered || prev_pressed != pressed)
+        invalidate();
 }
 
 void RadialOverlay::hide(uint8_t side) {
     if (side != side_.load(std::memory_order_relaxed)) return;
-    if (hwnd_) PostMessage(hwnd_, WM_OVR_HIDE, 0, 0);
+    post_hide();
 }
 
-void RadialOverlay::thread_main() {
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-
-    if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &factory_))) {
-        spdlog::warn("RadialOverlay: D2D1CreateFactory failed");
-        initialized_.store(true);
-        CoUninitialize();
-        return;
-    }
-    if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,
-            __uuidof(IDWriteFactory),
-            reinterpret_cast<IUnknown**>(&dwrite_)))) {
-        spdlog::warn("RadialOverlay: DWriteCreateFactory failed");
-        factory_->Release(); factory_ = nullptr;
-        initialized_.store(true);
-        CoUninitialize();
-        return;
-    }
-
-    WNDCLASSEXW wc = {};
-    wc.cbSize        = sizeof(wc);
-    wc.lpfnWndProc   = s_wnd_proc;
-    wc.hInstance     = GetModuleHandleW(nullptr);
-    wc.lpszClassName = L"WinDeckRadialOverlay";
-    wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
-    RegisterClassExW(&wc);
-
-    hwnd_ = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
-        L"WinDeckRadialOverlay", L"",
-        WS_POPUP,
-        0, 0, kWidth, kHeight,
-        nullptr, nullptr, GetModuleHandleW(nullptr), this);
-
-    if (!hwnd_) {
-        spdlog::warn("RadialOverlay: CreateWindowExW failed ({})", GetLastError());
-        initialized_.store(true);
-        if (dwrite_) { dwrite_->Release(); dwrite_ = nullptr; }
-        if (factory_) { factory_->Release(); factory_ = nullptr; }
-        CoUninitialize();
-        return;
-    }
-
-    SetLayeredWindowAttributes(hwnd_, kColorKey, kGlobalAlpha, LWA_COLORKEY | LWA_ALPHA);
-
-    if (FAILED(create_resources())) {
-        spdlog::warn("RadialOverlay: D2D resource creation failed");
-    }
-
-    initialized_.store(true, std::memory_order_release);
-
-    MSG msg;
-    while (GetMessageW(&msg, nullptr, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
-
-    release_resources();
-    if (dwrite_)  { dwrite_->Release();  dwrite_  = nullptr; }
-    if (factory_) { factory_->Release(); factory_ = nullptr; }
-    CoUninitialize();
-}
-
-LRESULT CALLBACK RadialOverlay::s_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    RadialOverlay* self = nullptr;
-    if (msg == WM_NCCREATE) {
-        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
-        self = reinterpret_cast<RadialOverlay*>(cs->lpCreateParams);
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        self->hwnd_ = hwnd;
-    } else {
-        self = reinterpret_cast<RadialOverlay*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    }
-    if (self) return self->wnd_proc(hwnd, msg, wp, lp);
-    return DefWindowProcW(hwnd, msg, wp, lp);
-}
-
-LRESULT RadialOverlay::wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    switch (msg) {
-        case WM_PAINT:
-            on_paint();
-            return 0;
-        case WM_ERASEBKGND:
-            return 1;
-        case WM_OVR_SHOW:
-            on_show(static_cast<uint8_t>(wp));
-            return 0;
-        case WM_OVR_HIDE:
-            on_hide();
-            return 0;
-        case WM_CLOSE:
-            DestroyWindow(hwnd);
-            return 0;
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
-    }
-    return DefWindowProcW(hwnd, msg, wp, lp);
-}
-
-void RadialOverlay::on_show(uint8_t side) {
-    reposition(side);
-    ShowWindow(hwnd_, SW_SHOWNA);
-    InvalidateRect(hwnd_, nullptr, FALSE);
-}
-
-void RadialOverlay::on_hide() {
-    ShowWindow(hwnd_, SW_HIDE);
+void RadialOverlay::on_show(WPARAM wp) {
+    reposition(static_cast<uint8_t>(wp));
+    OverlayBase::on_show(wp);
 }
 
 void RadialOverlay::reposition(uint8_t side) {
@@ -174,14 +60,14 @@ void RadialOverlay::reposition(uint8_t side) {
     constexpr int margin = 25;
     int x = (side == 1) ? margin : (sw - kWidth - margin);
     int y = sh - kHeight - 50;
-    SetWindowPos(hwnd_, HWND_TOPMOST, x, y, kWidth, kHeight,
+    SetWindowPos(hwnd(), HWND_TOPMOST, x, y, kWidth, kHeight,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
 void RadialOverlay::on_paint() {
     if (!rt_) {
-        if (FAILED(create_resources())) {
-            ValidateRect(hwnd_, nullptr);
+        if (FAILED(recreate_resources())) {
+            ValidateRect(hwnd(), nullptr);
             return;
         }
     }
@@ -202,65 +88,81 @@ void RadialOverlay::on_paint() {
     for (int i = 0; i < 8; i++) draw_label(i);
 
     HRESULT hr = rt_->EndDraw();
-    if (hr == D2DERR_RECREATE_TARGET) release_resources();
-    ValidateRect(hwnd_, nullptr);
+    if (hr == D2DERR_RECREATE_TARGET) {
+        release_child_resources();
+        rt_ = nullptr; // triggers full recreate on next paint
+    }
+    ValidateRect(hwnd(), nullptr);
 }
 
-void RadialOverlay::draw_wedge(int sector, int hovered, bool pressed) {
-    if (!factory_ || !rt_) return;
+HRESULT RadialOverlay::create_child_resources() {
+    build_wedge_geometry();
+    return S_OK;
+}
 
-    // D2D angle: 0 degrees=east, CW+. North = -90 degrees.
-    // Sector i spans +-22.5 degrees around center = -90 + sector*45.
-    // Parallel gaps: angular offset = asin(half_gap / radius) at each radius,
-    // so the linear gap width is constant (edges are parallel, not radiating).
-    constexpr float kHalfGap = 1.5f; // pixels — total gap between sectors = 3px
-    float boundary_start = -112.5f + sector * 45.0f;
-    float boundary_end   = boundary_start + 45.0f;
+void RadialOverlay::release_child_resources() {
+    for (auto*& g : wedge_geom_) {
+        if (g) { g->Release(); g = nullptr; }
+    }
+}
 
+void RadialOverlay::build_wedge_geometry() {
+    if (!factory_) return;
+    constexpr float kHalfGap = 1.5f;
     float inner_offset = asinf(kHalfGap / kInnerR) * 180.0f / kPi;
     float outer_offset = asinf(kHalfGap / kOuterR) * 180.0f / kPi;
 
-    D2D1_POINT_2F p0 = polar(kCx, kCy, kInnerR, boundary_start + inner_offset);
-    D2D1_POINT_2F p1 = polar(kCx, kCy, kOuterR, boundary_start + outer_offset);
-    D2D1_POINT_2F p2 = polar(kCx, kCy, kOuterR, boundary_end   - outer_offset);
-    D2D1_POINT_2F p3 = polar(kCx, kCy, kInnerR, boundary_end   - inner_offset);
+    for (int i = 0; i < 8; i++) {
+        float boundary_start = -112.5f + i * 45.0f;
+        float boundary_end   = boundary_start + 45.0f;
 
-    ID2D1PathGeometry* geom = nullptr;
-    if (FAILED(factory_->CreatePathGeometry(&geom))) return;
+        D2D1_POINT_2F p0 = polar(kCx, kCy, kInnerR, boundary_start + inner_offset);
+        D2D1_POINT_2F p1 = polar(kCx, kCy, kOuterR, boundary_start + outer_offset);
+        D2D1_POINT_2F p2 = polar(kCx, kCy, kOuterR, boundary_end   - outer_offset);
+        D2D1_POINT_2F p3 = polar(kCx, kCy, kInnerR, boundary_end   - inner_offset);
 
-    ID2D1GeometrySink* sink = nullptr;
-    if (FAILED(geom->Open(&sink))) { geom->Release(); return; }
+        ID2D1PathGeometry* geom = nullptr;
+        if (FAILED(factory_->CreatePathGeometry(&geom))) continue;
 
-    sink->SetFillMode(D2D1_FILL_MODE_WINDING);
-    sink->BeginFigure(p0, D2D1_FIGURE_BEGIN_FILLED);
-    sink->AddLine(p1);
+        ID2D1GeometrySink* sink = nullptr;
+        if (FAILED(geom->Open(&sink))) { geom->Release(); continue; }
 
-    D2D1_ARC_SEGMENT arc_out{};
-    arc_out.point          = p2;
-    arc_out.size           = {kOuterR, kOuterR};
-    arc_out.rotationAngle  = 0.0f;
-    arc_out.sweepDirection = D2D1_SWEEP_DIRECTION_CLOCKWISE;
-    arc_out.arcSize        = D2D1_ARC_SIZE_SMALL;
-    sink->AddArc(arc_out);
+        sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+        sink->BeginFigure(p0, D2D1_FIGURE_BEGIN_FILLED);
+        sink->AddLine(p1);
 
-    sink->AddLine(p3);
+        D2D1_ARC_SEGMENT arc_out{};
+        arc_out.point          = p2;
+        arc_out.size           = {kOuterR, kOuterR};
+        arc_out.rotationAngle  = 0.0f;
+        arc_out.sweepDirection = D2D1_SWEEP_DIRECTION_CLOCKWISE;
+        arc_out.arcSize        = D2D1_ARC_SIZE_SMALL;
+        sink->AddArc(arc_out);
 
-    D2D1_ARC_SEGMENT arc_in{};
-    arc_in.point          = p0;
-    arc_in.size           = {kInnerR, kInnerR};
-    arc_in.rotationAngle  = 0.0f;
-    arc_in.sweepDirection = D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE;
-    arc_in.arcSize        = D2D1_ARC_SIZE_SMALL;
-    sink->AddArc(arc_in);
+        sink->AddLine(p3);
 
-    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-    sink->Close();
-    sink->Release();
+        D2D1_ARC_SEGMENT arc_in{};
+        arc_in.point          = p0;
+        arc_in.size           = {kInnerR, kInnerR};
+        arc_in.rotationAngle  = 0.0f;
+        arc_in.sweepDirection = D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE;
+        arc_in.arcSize        = D2D1_ARC_SIZE_SMALL;
+        sink->AddArc(arc_in);
+
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        sink->Close();
+        sink->Release();
+
+        wedge_geom_[i] = geom;
+    }
+}
+
+void RadialOverlay::draw_wedge(int sector, int hovered, bool pressed) {
+    if (!rt_ || !wedge_geom_[sector]) return;
 
     ID2D1SolidColorBrush* brush = br_sector_;
     if (sector == hovered) brush = pressed ? br_active_ : br_hover_;
-    rt_->FillGeometry(geom, brush);
-    geom->Release();
+    rt_->FillGeometry(wedge_geom_[sector], brush);
 }
 
 void RadialOverlay::draw_label(int sector) {
@@ -285,52 +187,6 @@ void RadialOverlay::draw_label(int sector) {
                   text_fmt_, rect, br_text_,
                   D2D1_DRAW_TEXT_OPTIONS_NONE,
                   DWRITE_MEASURING_MODE_NATURAL);
-}
-
-HRESULT RadialOverlay::create_resources() {
-    if (!factory_ || !dwrite_ || !hwnd_) return E_FAIL;
-    release_resources();
-
-    D2D1_RENDER_TARGET_PROPERTIES rt_props =
-        D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
-    D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_props =
-        D2D1::HwndRenderTargetProperties(hwnd_,
-            D2D1::SizeU(kWidth, kHeight));
-
-    HRESULT hr = factory_->CreateHwndRenderTarget(rt_props, hwnd_props, &rt_);
-    if (FAILED(hr)) return hr;
-
-    auto mk = [&](float r, float g, float b, ID2D1SolidColorBrush** out) -> HRESULT {
-        return rt_->CreateSolidColorBrush(D2D1::ColorF(r, g, b), out);
-    };
-    if (FAILED(mk(0.149f, 0.149f, 0.149f, &br_sector_))) return E_FAIL; // #262626
-    if (FAILED(mk(0.250f, 0.250f, 0.300f, &br_hover_)))  return E_FAIL; // subtle blue-gray
-    if (FAILED(mk(0.902f, 0.600f, 0.098f, &br_active_))) return E_FAIL; // orange
-    if (FAILED(mk(0.078f, 0.078f, 0.078f, &br_center_))) return E_FAIL; // near-black
-    if (FAILED(mk(1.000f, 1.000f, 1.000f, &br_text_)))   return E_FAIL; // white
-
-    hr = dwrite_->CreateTextFormat(
-        L"Segoe UI", nullptr,
-        DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        14.0f, L"en-US", &text_fmt_);
-    if (FAILED(hr)) return hr;
-
-    text_fmt_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    text_fmt_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-    return S_OK;
-}
-
-void RadialOverlay::release_resources() {
-    auto rel = [](auto*& p) { if (p) { p->Release(); p = nullptr; } };
-    rel(text_fmt_);
-    rel(br_text_);
-    rel(br_center_);
-    rel(br_active_);
-    rel(br_hover_);
-    rel(br_sector_);
-    rel(rt_);
 }
 
 } // namespace windeck::overlay

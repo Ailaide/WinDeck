@@ -32,7 +32,6 @@ struct StickConfig {
     float         outer_deadzone = 0.95f;
     ResponseCurve curve = ResponseCurve::Linear;
     float         mouse_sensitivity = 1.0f;
-    float         overlap = 0.0f;  // 0-1, diagonal overlap for wasd/arrows
 };
 
 struct TriggerConfig {
@@ -66,8 +65,7 @@ struct TouchpadConfig {
     TouchpadMode mode = TouchpadMode::TrackpadInertia;
     uint16_t     pressure_threshold = 6144; // 0-32767 (per hid-steam kernel driver)
     float        sensitivity = 1.0f;
-    float        friction = 0.95f;          // For inertia mode
-    float        overlap = 0.5f;            // 0-1, diagonal overlap for wasd/arrows modes
+    float        inertia = 0.95f;           // Trackball glide: 0.80=stops fast, 0.99=long glide
     TouchpadAccelerationPreset acceleration = TouchpadAccelerationPreset::Normal;
     ButtonAction click_action = {ActionType::MouseButton, 0}; // Default: LMB
     // Radial menu: 8 sectors, default keys 1-8 starting at 12 o'clock clockwise
@@ -80,14 +78,12 @@ struct TouchpadConfig {
 };
 
 // Gyro operating mode
-enum class GyroMode : uint8_t { Off, RightStick, Mouse };
-enum class GyroActivation : uint8_t { Always, TouchRightPad, TouchLeftPad };
+enum class GyroMode : uint8_t { Disabled, Mouse };
 
 struct GyroConfig {
-    GyroMode       mode = GyroMode::Off;
+    GyroMode       mode = GyroMode::Disabled;
     float          sensitivity_x = 1.0f;
     float          sensitivity_y = 1.0f;
-    GyroActivation activation = GyroActivation::Always;
 };
 
 // All remappable buttons on the controller (excluding system buttons)
@@ -148,6 +144,9 @@ struct Profile {
 
     // Gyro
     GyroConfig    gyro;
+
+    // Global: diagonal overlap for WASD/Arrows modes (0-1)
+    float overlap = 0.5f;
 
     // Initialize with defaults
     Profile() {

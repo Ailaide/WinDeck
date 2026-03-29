@@ -38,7 +38,9 @@ add_executable(windeck
     src/modes/mouse_mode.cpp
     src/modes/inertia.cpp
     src/modes/radial_menu_mode.cpp
+    src/overlay/overlay_base.cpp
     src/overlay/radial_overlay.cpp
+    src/overlay/quick_access_overlay.cpp
     src/console/console_commands.cpp
 )
 

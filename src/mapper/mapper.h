@@ -27,18 +27,30 @@ struct MapResult {
 class Mapper {
 public:
     void set_device(windeck::neptune::NeptuneDevice* device);
-    void apply_profile(const config::Profile& profile);
+    void apply_profile(const config::Profile& profile,
+                       windeck::output::SyntheticInput& synth);
     void set_overlay(windeck::overlay::RadialOverlay* overlay);
 
     MapResult map(const neptune::InputReport& input,
                   windeck::output::SyntheticInput& synth);
 
+    // Map + tick inertia + flush synth, all under one lock.
+    // Prevents race with apply_profile on console thread.
+    MapResult map_and_flush(const neptune::InputReport& input,
+                            windeck::output::SyntheticInput& synth);
+
     // Tick inertia for touchpads (call every frame).
     void tick(windeck::output::SyntheticInput& synth);
+
+    // Tick inertia + flush under one lock.
+    void tick_and_flush(windeck::output::SyntheticInput& synth);
 
     void release_all(windeck::output::SyntheticInput& synth);
 
 private:
+    MapResult map_unlocked(const neptune::InputReport& input,
+                           windeck::output::SyntheticInput& synth);
+    void release_all_unlocked(windeck::output::SyntheticInput& synth);
     mutable std::shared_mutex mutex_;
     ButtonMapper   button_mapper_;
     StickMapper    left_stick_;

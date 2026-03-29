@@ -136,7 +136,7 @@ static std::string radial_action_label(const config::ButtonAction& a) {
     }
 }
 
-void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
+void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg, float overlap) {
     mode_ = cfg.mode;
     acceleration_ = cfg.acceleration;
     pressure_threshold_ = cfg.pressure_threshold;
@@ -146,7 +146,7 @@ void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
     // Convert to per-frame at 250Hz: pow(feel, 1) is too fast,
     // so we remap to a higher value for smooth decay.
     // 0.95 feel → 0.985 per frame → ~0.16s decay at 250Hz
-    float per_frame_friction = 1.0f - (1.0f - cfg.friction) * 0.3f;
+    float per_frame_friction = 1.0f - (1.0f - cfg.inertia) * 0.3f;
     inertia_.set_friction(per_frame_friction);
     inertia_.set_cutoff(0.1f);
     touch_timer_.reset();
@@ -156,11 +156,11 @@ void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
     switch (mode_) {
         case config::TouchpadMode::Wasd:
             directional_.set_keys_wasd();
-            directional_.set_overlap(cfg.overlap);
+            directional_.set_overlap(overlap);
             break;
         case config::TouchpadMode::Arrows:
             directional_.set_keys_arrows();
-            directional_.set_overlap(cfg.overlap);
+            directional_.set_overlap(overlap);
             break;
         case config::TouchpadMode::RadialMenu:
             radial_menu_.set_keys(cfg.radial_keys);

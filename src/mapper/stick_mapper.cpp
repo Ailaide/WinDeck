@@ -3,7 +3,7 @@
 
 namespace windeck::mapper {
 
-void StickMapper::apply_config(const config::StickConfig& cfg) {
+void StickMapper::apply_config(const config::StickConfig& cfg, float overlap) {
     mode_ = cfg.mode;
     inner_ = cfg.inner_deadzone;
     outer_ = cfg.outer_deadzone;
@@ -14,11 +14,11 @@ void StickMapper::apply_config(const config::StickConfig& cfg) {
     switch (cfg.mode) {
         case config::StickMode::Wasd:
             directional_.set_keys_wasd();
-            directional_.set_overlap(cfg.overlap);
+            directional_.set_overlap(overlap);
             break;
         case config::StickMode::Arrows:
             directional_.set_keys_arrows();
-            directional_.set_overlap(cfg.overlap);
+            directional_.set_overlap(overlap);
             break;
         case config::StickMode::Mouse:
             mouse_.set_sensitivity(cfg.mouse_sensitivity);

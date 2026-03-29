@@ -34,4 +34,19 @@ uint8_t TriggerMapper::map(uint16_t raw, windeck::output::SyntheticInput& synth)
     return apply_trigger_deadzone(raw, threshold_);
 }
 
+void TriggerMapper::release_all(windeck::output::SyntheticInput& synth) {
+    if (button_pressed_) {
+        switch (button_action_.type) {
+            case config::ActionType::Keyboard:
+                synth.key_set(button_action_.code, false);
+                break;
+            case config::ActionType::MouseButton:
+                synth.mouse_set(static_cast<uint8_t>(button_action_.code), false);
+                break;
+            default: break;
+        }
+        button_pressed_ = false;
+    }
+}
+
 } // namespace windeck::mapper

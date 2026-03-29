@@ -25,7 +25,7 @@ public:
     }
     void set_overlay(windeck::overlay::RadialOverlay* overlay) { overlay_ = overlay; }
 
-    void apply_config(const config::TouchpadConfig& cfg);
+    void apply_config(const config::TouchpadConfig& cfg, float overlap);
 
     // Process touchpad input each frame.
     // pad_x, pad_y: absolute coordinates (-32768..32767), 0 when not touching
