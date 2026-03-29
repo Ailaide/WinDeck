@@ -63,30 +63,58 @@ USHORT ButtonMapper::map(uint32_t nb, uint32_t nb_ext,
         return xb;
     }
 
-    // Process each remappable button through the profile
+    // Two-pass mapping: accumulate desired state per output, then apply once.
+    // This allows multiple buttons mapped to the same key without conflicts —
+    // the key stays pressed as long as ANY of them is held.
+    bool key_desired[256] = {};
+    bool key_owned[256]   = {};
+    bool mouse_desired[3] = {};
+    bool mouse_owned[3]   = {};
+
     for (size_t i = 0; i < static_cast<size_t>(ButtonId::Count); i++) {
         const auto& nmap = kNeptuneMap[i];
         bool pressed = false;
-        if (nmap.btn_mask)  pressed |= (nb & nmap.btn_mask) != 0;
-        if (nmap.ext_mask)  pressed |= (nb_ext & nmap.ext_mask) != 0;
+        if (nmap.btn_mask) pressed |= (nb & nmap.btn_mask) != 0;
+        if (nmap.ext_mask) pressed |= (nb_ext & nmap.ext_mask) != 0;
+
+        // Rising edge: true only on the frame the button was just pressed
+        bool rising = false;
+        if (nmap.btn_mask) rising |= (rising_btn & nmap.btn_mask) != 0;
+        if (nmap.ext_mask) rising |= (rising_ext & nmap.ext_mask) != 0;
 
         const auto& action = actions_[i];
-
         switch (action.type) {
             case ActionType::XboxButton:
-                if (pressed && action.code != 0) {
+                if (pressed && action.code != 0)
                     xb |= static_cast<USHORT>(action.code);
-                }
                 break;
             case ActionType::Keyboard:
-                synth.key_set(action.code, pressed);
+                if (action.code < 256) {
+                    key_owned[action.code]   = true;
+                    key_desired[action.code] = key_desired[action.code] || pressed;
+                }
                 break;
             case ActionType::MouseButton:
-                synth.mouse_set(static_cast<uint8_t>(action.code), pressed);
+                if (action.code < 3) {
+                    mouse_owned[action.code]   = true;
+                    mouse_desired[action.code] = mouse_desired[action.code] || pressed;
+                }
+                break;
+            case ActionType::MouseScroll:
+                // One tick per press (rising edge only), code=1 → up, code=0 → down
+                if (rising)
+                    synth.mouse_scroll(action.code ? WHEEL_DELTA : -WHEEL_DELTA);
                 break;
             case ActionType::None:
                 break;
         }
+    }
+
+    for (int i = 0; i < 256; i++) {
+        if (key_owned[i]) synth.key_set(static_cast<uint16_t>(i), key_desired[i]);
+    }
+    for (int i = 0; i < 3; i++) {
+        if (mouse_owned[i]) synth.mouse_set(static_cast<uint8_t>(i), mouse_desired[i]);
     }
 
     return xb;

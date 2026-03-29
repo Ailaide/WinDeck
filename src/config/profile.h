@@ -11,6 +11,7 @@ enum class ActionType : uint8_t {
     XboxButton,    // Emit an Xbox 360 button
     Keyboard,      // Emit a keyboard key (VK code)
     MouseButton,   // Emit a mouse button (left/right/middle)
+    MouseScroll,   // Emit one mouse wheel tick on press: code=1 up, code=0 down
     None           // No action
 };
 

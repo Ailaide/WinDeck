@@ -20,10 +20,11 @@ static bool parse_action(const std::string& type_str, const std::string& code_st
     if (type_str == "none") { out = {cfg::ActionType::None, 0}; return true; }
     uint16_t code = 0;
     if (!parse_u16(code_str, code)) { printf("Invalid code: %s\n", code_str.c_str()); return false; }
-    if      (type_str == "xbox")  out = {cfg::ActionType::XboxButton,  code};
-    else if (type_str == "key")   out = {cfg::ActionType::Keyboard,    code};
-    else if (type_str == "mouse") out = {cfg::ActionType::MouseButton, code};
-    else { printf("Unknown type: %s (xbox|key|mouse|none)\n", type_str.c_str()); return false; }
+    if      (type_str == "xbox")   out = {cfg::ActionType::XboxButton,  code};
+    else if (type_str == "key")    out = {cfg::ActionType::Keyboard,    code};
+    else if (type_str == "mouse")  out = {cfg::ActionType::MouseButton, code};
+    else if (type_str == "scroll") out = {cfg::ActionType::MouseScroll, code};
+    else { printf("Unknown type: %s (xbox|key|mouse|scroll|none)\n", type_str.c_str()); return false; }
     return true;
 }
 
@@ -41,6 +42,7 @@ void ConsoleCommands::process(const std::string& line) {
         printf("  gyro disabled|mouse|rstick\n");
         printf("Buttons:\n");
         printf("  button <name> xbox|key|mouse <code>   (name: A B X Y LB RB Start Back LS RS L4 L5 R4 R5 LPadClick RPadClick)\n");
+        printf("  button <name> scroll 1|0              (1=scroll up, 0=scroll down, one tick per press)\n");
         printf("  button <name> none\n");
         printf("  Xbox codes: A=0x1000 B=0x2000 X=0x4000 Y=0x8000 LB=0x100 RB=0x200 Start=0x10 Back=0x20 LS=0x40 RS=0x80\n");
         printf("Triggers:\n");
@@ -61,6 +63,7 @@ void ConsoleCommands::process(const std::string& line) {
         printf("  gyro sensitivity_x|sensitivity_y <value>\n");
         printf("  gyro activation always|touch_right|touch_left\n");
         printf("Other:\n");
+        printf("  load <profile_name>  - load and apply profile from disk\n");
         printf("  name <profile_name>  - rename current profile\n");
         printf("  save                 - save current profile\n");
         printf("  status               - show current config\n");
@@ -215,6 +218,18 @@ void ConsoleCommands::process(const std::string& line) {
                     cmd[0], type_str.c_str(), code, trig.button_threshold);
             } else { printf("Unknown type: %s (key|mouse|none)\n", type_str.c_str()); return; }
         } else { printf("Unknown: %s (threshold|button)\n", sub.c_str()); return; }
+
+    } else if (cmd == "load") {
+        std::string profile_name; ss >> profile_name;
+        if (profile_name.empty()) { printf("Usage: load <profile_name>\n"); return; }
+        if (!config_.load_profile(profile_name)) {
+            printf("Profile '%s' not found.\n", profile_name.c_str());
+            return;
+        }
+        auto loaded = config_.get_profile();
+        mapper_.apply_profile(loaded);
+        printf("Profile '%s' loaded and applied.\n", profile_name.c_str());
+        return;
 
     } else if (cmd == "name") {
         std::string new_name; ss >> new_name;

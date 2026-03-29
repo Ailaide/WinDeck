@@ -3,7 +3,7 @@
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <algorithm>
-#include <shlobj.h>
+#include <windows.h>
 
 using json = nlohmann::json;
 
@@ -16,6 +16,7 @@ static const char* action_type_str(ActionType t) {
         case ActionType::XboxButton:  return "xbox";
         case ActionType::Keyboard:    return "keyboard";
         case ActionType::MouseButton: return "mouse";
+        case ActionType::MouseScroll: return "scroll";
         default:                      return "none";
     }
 }
@@ -24,6 +25,7 @@ static ActionType parse_action_type(const std::string& s) {
     if (s == "xbox")     return ActionType::XboxButton;
     if (s == "keyboard") return ActionType::Keyboard;
     if (s == "mouse")    return ActionType::MouseButton;
+    if (s == "scroll")   return ActionType::MouseScroll;
     return ActionType::None;
 }
 
@@ -322,12 +324,11 @@ Profile profile_from_json(const std::string& json_str) {
 // --- Config manager ---
 
 Config::Config() {
-    wchar_t* appdata = nullptr;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appdata))) {
-        config_dir_ = std::filesystem::path(appdata) / "WinDeck";
-        CoTaskMemFree(appdata);
+    wchar_t exe_path[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exe_path, MAX_PATH) != 0) {
+        config_dir_ = std::filesystem::path(exe_path).parent_path();
     } else {
-        config_dir_ = std::filesystem::path(".") / "WinDeck";
+        config_dir_ = std::filesystem::current_path();
     }
     ensure_dirs();
 }

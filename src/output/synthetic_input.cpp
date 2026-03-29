@@ -2,15 +2,38 @@
 
 namespace windeck::output {
 
+// Extended keys: navigation cluster + arrows. These require KEYEVENTF_EXTENDEDKEY
+// so the system distinguishes them from numpad keys with the same scan code.
+static bool is_extended_key(uint16_t vk) {
+    switch (vk) {
+        case VK_PRIOR: case VK_NEXT:
+        case VK_END:   case VK_HOME:
+        case VK_LEFT:  case VK_UP:  case VK_RIGHT: case VK_DOWN:
+        case VK_INSERT: case VK_DELETE:
+        case VK_RCONTROL: case VK_RMENU:
+        case VK_DIVIDE: case VK_SNAPSHOT:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void SyntheticInput::key_press(uint16_t vk) {
     if (vk >= 256 || key_state_[vk]) return;
     key_state_[vk] = true;
 
+    WORD scan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
+    bool extended = is_extended_key(vk);
+
     INPUT inp{};
-    inp.type = INPUT_KEYBOARD;
-    inp.ki.wVk = static_cast<WORD>(vk);
-    inp.ki.wScan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
-    inp.ki.dwFlags = (vk >= 0x21 && vk <= 0x2E) ? KEYEVENTF_EXTENDEDKEY : 0;
+    inp.type       = INPUT_KEYBOARD;
+    inp.ki.wScan   = scan;
+    inp.ki.dwFlags = KEYEVENTF_SCANCODE | (extended ? KEYEVENTF_EXTENDEDKEY : 0);
+    // Fallback to VK if scan code is unavailable (e.g. some media keys)
+    if (scan == 0) {
+        inp.ki.wVk     = static_cast<WORD>(vk);
+        inp.ki.dwFlags = extended ? KEYEVENTF_EXTENDEDKEY : 0;
+    }
     add_input(inp);
 }
 
@@ -18,11 +41,17 @@ void SyntheticInput::key_release(uint16_t vk) {
     if (vk >= 256 || !key_state_[vk]) return;
     key_state_[vk] = false;
 
+    WORD scan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
+    bool extended = is_extended_key(vk);
+
     INPUT inp{};
-    inp.type = INPUT_KEYBOARD;
-    inp.ki.wVk = static_cast<WORD>(vk);
-    inp.ki.wScan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
-    inp.ki.dwFlags = KEYEVENTF_KEYUP | ((vk >= 0x21 && vk <= 0x2E) ? KEYEVENTF_EXTENDEDKEY : 0);
+    inp.type       = INPUT_KEYBOARD;
+    inp.ki.wScan   = scan;
+    inp.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP | (extended ? KEYEVENTF_EXTENDEDKEY : 0);
+    if (scan == 0) {
+        inp.ki.wVk     = static_cast<WORD>(vk);
+        inp.ki.dwFlags = KEYEVENTF_KEYUP | (extended ? KEYEVENTF_EXTENDEDKEY : 0);
+    }
     add_input(inp);
 }
 
