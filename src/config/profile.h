@@ -32,6 +32,9 @@ struct StickConfig {
     float         outer_deadzone = 0.95f;
     ResponseCurve curve = ResponseCurve::Linear;
     float         mouse_sensitivity = 1.0f;
+    bool          invert_x = false;
+    bool          invert_y = false;
+    float         overlap = 0.5f;  // for WASD/Arrows modes
 };
 
 struct TriggerConfig {
@@ -47,6 +50,7 @@ enum class DpadMode : uint8_t { Dpad, Wasd, Arrows };
 
 struct DpadConfig {
     DpadMode mode = DpadMode::Dpad;
+    float    overlap = 0.5f;  // for WASD/Arrows modes
 };
 
 // Touchpad operating mode
@@ -68,6 +72,9 @@ struct TouchpadConfig {
     float        inertia = 0.95f;           // Trackball glide: 0.80=stops fast, 0.99=long glide
     TouchpadAccelerationPreset acceleration = TouchpadAccelerationPreset::Normal;
     ButtonAction click_action = {ActionType::MouseButton, 0}; // Default: LMB
+    bool         invert_x = false;
+    bool         invert_y = false;
+    float        overlap = 0.5f;  // for WASD/Arrows/DpadButtons modes
     // Radial menu: 8 sectors, default keys 1-8 starting at 12 o'clock clockwise
     std::array<ButtonAction, 8> radial_keys = {{
         {ActionType::Keyboard, '1'}, {ActionType::Keyboard, '2'},
@@ -84,6 +91,8 @@ struct GyroConfig {
     GyroMode       mode = GyroMode::Disabled;
     float          sensitivity_x = 1.0f;
     float          sensitivity_y = 1.0f;
+    bool           invert_x = false;
+    bool           invert_y = false;
 };
 
 // All remappable buttons on the controller (excluding system buttons)
@@ -144,9 +153,6 @@ struct Profile {
 
     // Gyro
     GyroConfig    gyro;
-
-    // Global: diagonal overlap for WASD/Arrows modes (0-1)
-    float overlap = 0.5f;
 
     // Initialize with defaults
     Profile() {

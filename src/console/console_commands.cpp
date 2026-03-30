@@ -60,8 +60,6 @@ void ConsoleCommands::process(const std::string& line) {
         printf("  lpad|rpad acceleration off|normal|strong\n");
         printf("  lpad|rpad click xbox|key|mouse <code>\n");
         printf("  lpad|rpad click none\n");
-        printf("Global params:\n");
-        printf("  overlap <0.0-1.0>\n");
         printf("Gyro params:\n");
         printf("  gyro sensitivity_x|sensitivity_y <value>\n");
         printf("Other:\n");
@@ -137,11 +135,6 @@ void ConsoleCommands::process(const std::string& line) {
             stick.mouse_sensitivity = std::clamp(v, 0.1f, 20.0f); changed = true;
             printf("%cstick mouse_sensitivity -> %.2f\n", cmd[0], stick.mouse_sensitivity);
         } else { printf("Unknown: %s\n", sub.c_str()); return; }
-
-    } else if (cmd == "overlap") {
-        float v; if (!(ss >> v)) { printf("Missing value\n"); return; }
-        profile.overlap = std::clamp(v, 0.0f, 1.0f); changed = true;
-        printf("overlap -> %.2f\n", profile.overlap);
 
     } else if (cmd == "dpad") {
         std::string sub; ss >> sub;
@@ -270,7 +263,7 @@ void ConsoleCommands::process(const std::string& line) {
             s(dpad_modes,3,static_cast<int>(p.dpad.mode)),
             s(gyro_modes,2,static_cast<int>(p.gyro.mode)),
             p.gyro.sensitivity_x, p.gyro.sensitivity_y);
-        printf("overlap=%.2f\n", p.overlap);
+        printf("lstick.overlap=%.2f rstick.overlap=%.2f\n", p.left_stick.overlap, p.right_stick.overlap);
         printf("ltrigger: threshold=%.3f  rtrigger: threshold=%.3f\n",
             p.left_trigger.threshold, p.right_trigger.threshold);
 

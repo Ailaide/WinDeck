@@ -17,7 +17,7 @@ struct OverlayColors {
     static constexpr D2D1_COLOR_F kActive = {0.902f, 0.600f, 0.098f, 1.0f}; // orange
     static constexpr D2D1_COLOR_F kCenter = {0.078f, 0.078f, 0.078f, 1.0f}; // near-black
     static constexpr D2D1_COLOR_F kText   = {1.000f, 1.000f, 1.000f, 1.0f}; // white
-    static constexpr BYTE kGlobalAlpha = 220;
+    static constexpr BYTE kGlobalAlpha = 235;
     static constexpr COLORREF kColorKey = RGB(0, 0, 0);
 };
 
@@ -70,9 +70,11 @@ protected:
 
     int width()  const { return width_; }
     int height() const { return height_; }
+    void set_size(int w, int h) { width_ = w; height_ = h; }
 
-    static constexpr UINT WM_OVR_SHOW = WM_APP + 1;
-    static constexpr UINT WM_OVR_HIDE = WM_APP + 2;
+    static constexpr UINT WM_OVR_SHOW   = WM_APP + 1;
+    static constexpr UINT WM_OVR_HIDE   = WM_APP + 2;
+    static constexpr UINT WM_OVR_RESIZE = WM_APP + 3;
 
     // Attempt to recreate D2D resources after device loss.
     HRESULT recreate_resources();

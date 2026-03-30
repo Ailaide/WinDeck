@@ -24,8 +24,8 @@ void Mapper::apply_profile(const config::Profile& profile,
     synth.flush();
     button_mapper_.set_config(profile.buttons);
 
-    left_stick_.apply_config(profile.left_stick, profile.overlap);
-    right_stick_.apply_config(profile.right_stick, profile.overlap);
+    left_stick_.apply_config(profile.left_stick);
+    right_stick_.apply_config(profile.right_stick);
 
     left_trigger_.apply_config(profile.left_trigger);
     right_trigger_.apply_config(profile.right_trigger);
@@ -33,9 +33,9 @@ void Mapper::apply_profile(const config::Profile& profile,
     dpad_.apply_config(profile.dpad);
 
     left_touchpad_.set_name("L-Pad");
-    left_touchpad_.apply_config(profile.left_touchpad, profile.overlap);
+    left_touchpad_.apply_config(profile.left_touchpad);
     right_touchpad_.set_name("R-Pad");
-    right_touchpad_.apply_config(profile.right_touchpad, profile.overlap);
+    right_touchpad_.apply_config(profile.right_touchpad);
 
     gyro_.apply_config(profile.gyro);
 }

@@ -25,7 +25,7 @@ public:
     }
     void set_overlay(windeck::overlay::RadialOverlay* overlay) { overlay_ = overlay; }
 
-    void apply_config(const config::TouchpadConfig& cfg, float overlap);
+    void apply_config(const config::TouchpadConfig& cfg);
 
     // Process touchpad input each frame.
     // pad_x, pad_y: absolute coordinates (-32768..32767), 0 when not touching
@@ -44,6 +44,8 @@ private:
     config::TouchpadAccelerationPreset acceleration_ = config::TouchpadAccelerationPreset::Normal;
     config::ButtonAction click_action_{};
     uint16_t pressure_threshold_ = 6144;
+    bool invert_x_ = false;
+    bool invert_y_ = false;
 
     // Track previous state for delta calculation
     bool was_touching_ = false;
@@ -87,6 +89,7 @@ private:
     modes::DirectionalMode directional_;
     modes::Inertia inertia_;
     modes::RadialMenuMode  radial_menu_;
+    std::array<config::ButtonAction, 8> radial_keys_{};
     windeck::overlay::RadialOverlay* overlay_ = nullptr;
     const char* name_ = "pad";
     windeck::neptune::NeptuneDevice* haptic_device_ = nullptr;

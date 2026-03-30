@@ -21,6 +21,8 @@ private:
     config::GyroMode mode_ = config::GyroMode::Disabled;
     float sensitivity_x_ = 1.0f;
     float sensitivity_y_ = 1.0f;
+    bool invert_x_ = false;
+    bool invert_y_ = false;
     modes::TickTimer timer_;
     modes::MouseMode mouse_;
 };

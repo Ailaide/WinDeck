@@ -213,7 +213,13 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                 if (rising & btn::kDpadLeft)  qam.navigate(-1, 0);
                 if (rising & btn::kDpadRight) qam.navigate(1, 0);
                 if (rising & btn::kA)         qam.activate();
-                if (rising & btn::kB)         qam.hide();
+                if (rising & btn::kX)         qam.press_x();
+                if (rising & btn::kLShoulder) qam.cycle_category(-1);
+                if (rising & btn::kRShoulder) qam.cycle_category(1);
+                if (rising & btn::kB) {
+                    if (qam.is_submenu_open()) qam.hide_submenu();
+                    else qam.hide();
+                }
                 if (rising & btn::kSteam)     qam.hide();
 
                 // Send zeroed report to Xbox — game sees no input

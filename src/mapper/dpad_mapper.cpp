@@ -15,8 +15,14 @@ using namespace windeck::neptune;
 void DpadMapper::apply_config(const config::DpadConfig& cfg) {
     mode_ = cfg.mode;
     switch (mode_) {
-        case config::DpadMode::Wasd:   directional_.set_keys_wasd(); break;
-        case config::DpadMode::Arrows: directional_.set_keys_arrows(); break;
+        case config::DpadMode::Wasd:
+            directional_.set_keys_wasd();
+            directional_.set_overlap(cfg.overlap);
+            break;
+        case config::DpadMode::Arrows:
+            directional_.set_keys_arrows();
+            directional_.set_overlap(cfg.overlap);
+            break;
         default: break;
     }
 }

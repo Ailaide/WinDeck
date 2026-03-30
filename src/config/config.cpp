@@ -173,7 +173,10 @@ std::string profile_to_json(const Profile& p) {
             {"inner_deadzone", s.inner_deadzone},
             {"outer_deadzone", s.outer_deadzone},
             {"curve", curve_str(s.curve)},
-            {"mouse_sensitivity", s.mouse_sensitivity}
+            {"mouse_sensitivity", s.mouse_sensitivity},
+            {"invert_x", s.invert_x},
+            {"invert_y", s.invert_y},
+            {"overlap", s.overlap}
         };
     };
     j["left_stick"] = stick_json(p.left_stick);
@@ -194,7 +197,10 @@ std::string profile_to_json(const Profile& p) {
     j["right_trigger"] = trig_json(p.right_trigger);
 
     // D-Pad
-    j["dpad"] = {{"mode", dpad_mode_str(p.dpad.mode)}};
+    j["dpad"] = {
+        {"mode", dpad_mode_str(p.dpad.mode)},
+        {"overlap", p.dpad.overlap}
+    };
 
     // Touchpads
     auto pad_json = [](const TouchpadConfig& t) -> json {
@@ -204,7 +210,10 @@ std::string profile_to_json(const Profile& p) {
             {"sensitivity", t.sensitivity},
             {"inertia", t.inertia},
             {"acceleration", touchpad_accel_str(t.acceleration)},
-            {"click_action", action_to_json(t.click_action)}
+            {"click_action", action_to_json(t.click_action)},
+            {"invert_x", t.invert_x},
+            {"invert_y", t.invert_y},
+            {"overlap", t.overlap}
         };
         if (t.mode == TouchpadMode::RadialMenu) {
             json rk = json::array();
@@ -220,11 +229,10 @@ std::string profile_to_json(const Profile& p) {
     j["gyro"] = {
         {"mode", gyro_mode_str(p.gyro.mode)},
         {"sensitivity_x", p.gyro.sensitivity_x},
-        {"sensitivity_y", p.gyro.sensitivity_y}
+        {"sensitivity_y", p.gyro.sensitivity_y},
+        {"invert_x", p.gyro.invert_x},
+        {"invert_y", p.gyro.invert_y}
     };
-
-    // Global
-    j["overlap"] = p.overlap;
 
     return j.dump(2);
 }
@@ -253,6 +261,9 @@ Profile profile_from_json(const std::string& json_str) {
         s.outer_deadzone = std::clamp(sj.value("outer_deadzone", 0.95f), 0.0f, 1.0f);
         s.curve = parse_curve(sj.value("curve", "linear"));
         s.mouse_sensitivity = std::clamp(sj.value("mouse_sensitivity", 1.0f), 0.1f, 20.0f);
+        s.invert_x = sj.value("invert_x", false);
+        s.invert_y = sj.value("invert_y", false);
+        s.overlap = std::clamp(sj.value("overlap", 0.5f), 0.0f, 1.0f);
     };
     if (j.contains("left_stick"))  parse_stick(j["left_stick"], p.left_stick);
     if (j.contains("right_stick")) parse_stick(j["right_stick"], p.right_stick);
@@ -274,6 +285,7 @@ Profile profile_from_json(const std::string& json_str) {
     // D-Pad
     if (j.contains("dpad")) {
         p.dpad.mode = parse_dpad_mode(j["dpad"].value("mode", "dpad"));
+        p.dpad.overlap = std::clamp(j["dpad"].value("overlap", 0.5f), 0.0f, 1.0f);
     }
 
     // Touchpads
@@ -286,6 +298,9 @@ Profile profile_from_json(const std::string& json_str) {
         if (pj.contains("click_action")) {
             t.click_action = action_from_json(pj["click_action"]);
         }
+        t.invert_x = pj.value("invert_x", false);
+        t.invert_y = pj.value("invert_y", false);
+        t.overlap = std::clamp(pj.value("overlap", 0.5f), 0.0f, 1.0f);
         if (pj.contains("radial_keys")) {
             auto& rk = pj["radial_keys"];
             for (size_t i = 0; i < 8 && i < rk.size(); i++) {
@@ -301,10 +316,9 @@ Profile profile_from_json(const std::string& json_str) {
         p.gyro.mode = parse_gyro_mode(j["gyro"].value("mode", "disabled"));
         p.gyro.sensitivity_x = std::clamp(j["gyro"].value("sensitivity_x", 1.0f), 0.1f, 20.0f);
         p.gyro.sensitivity_y = std::clamp(j["gyro"].value("sensitivity_y", 1.0f), 0.1f, 20.0f);
+        p.gyro.invert_x = j["gyro"].value("invert_x", false);
+        p.gyro.invert_y = j["gyro"].value("invert_y", false);
     }
-
-    // Global
-    p.overlap = std::clamp(j.value("overlap", 0.5f), 0.0f, 1.0f);
 
     return p;
 }

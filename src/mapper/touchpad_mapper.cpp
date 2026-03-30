@@ -129,18 +129,32 @@ static std::string radial_action_label(const config::ButtonAction& a) {
         case config::ActionType::MouseScroll:
             return a.code ? "WhlU" : "WhlD";
         case config::ActionType::XboxButton:
-            return "Xbox";
+            switch (a.code) {
+                case 0x1000: return "A";
+                case 0x2000: return "B";
+                case 0x4000: return "X";
+                case 0x8000: return "Y";
+                case 0x0100: return "LB";
+                case 0x0200: return "RB";
+                case 0x0010: return "Srt";
+                case 0x0020: return "Bck";
+                case 0x0040: return "LS";
+                case 0x0080: return "RS";
+                default:     return "Xb";
+            }
         case config::ActionType::None:
         default:
             return "-";
     }
 }
 
-void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg, float overlap) {
+void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg) {
     mode_ = cfg.mode;
     acceleration_ = cfg.acceleration;
     pressure_threshold_ = cfg.pressure_threshold;
     click_action_ = cfg.click_action;
+    invert_x_ = cfg.invert_x;
+    invert_y_ = cfg.invert_y;
     mouse_.set_sensitivity(cfg.sensitivity);
     // Friction is configured as "feel" value (0.95 = gentle).
     // Convert to per-frame at 250Hz: pow(feel, 1) is too fast,
@@ -156,13 +170,14 @@ void TouchpadMapper::apply_config(const config::TouchpadConfig& cfg, float overl
     switch (mode_) {
         case config::TouchpadMode::Wasd:
             directional_.set_keys_wasd();
-            directional_.set_overlap(overlap);
+            directional_.set_overlap(cfg.overlap);
             break;
         case config::TouchpadMode::Arrows:
             directional_.set_keys_arrows();
-            directional_.set_overlap(overlap);
+            directional_.set_overlap(cfg.overlap);
             break;
         case config::TouchpadMode::RadialMenu:
+            radial_keys_ = cfg.radial_keys;
             radial_menu_.set_keys(cfg.radial_keys);
             if (overlay_) {
                 std::array<std::string, 8> lbl;
@@ -181,11 +196,17 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
     // --- Click with hysteresis (pressure jitters) ---
     // TrackpadInertia/Mouse: emit click_action + haptic.
     // Wasd/Arrows: haptic only (directional keys are gated behind click_held_).
-    if (mode_ == config::TouchpadMode::TrackpadInertia ||
-        mode_ == config::TouchpadMode::Mouse ||
-        mode_ == config::TouchpadMode::Wasd ||
-        mode_ == config::TouchpadMode::Arrows ||
-        mode_ == config::TouchpadMode::RadialMenu) {
+    // Skip click logic entirely for TrackpadInertia/Mouse when no action assigned
+    bool skip_click = (mode_ == config::TouchpadMode::TrackpadInertia ||
+                       mode_ == config::TouchpadMode::Mouse) &&
+                      click_action_.type == config::ActionType::None;
+
+    if (!skip_click &&
+        (mode_ == config::TouchpadMode::TrackpadInertia ||
+         mode_ == config::TouchpadMode::Mouse ||
+         mode_ == config::TouchpadMode::Wasd ||
+         mode_ == config::TouchpadMode::Arrows ||
+         mode_ == config::TouchpadMode::RadialMenu)) {
         bool click_now;
         if (click_held_) {
             click_now = touching && (pressure >= pressure_threshold_ * 2 / 3);
@@ -220,6 +241,8 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
         if (was_touching_) {
             float dx = static_cast<float>(pad_x - prev_x_);
             float dy = static_cast<float>(pad_y - prev_y_);
+            if (invert_x_) dx = -dx;
+            if (invert_y_) dy = -dy;
             float touch_step = touch_timer_.step();
 
             float scaled_dx = dx * kTouchScale;
@@ -384,8 +407,12 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
         } else {
             touch_timer_.reset();
             // First touch — show overlay if radial menu mode
-            if (mode_ == config::TouchpadMode::RadialMenu && overlay_)
+            if (mode_ == config::TouchpadMode::RadialMenu && overlay_) {
+                std::array<std::string, 8> lbl;
+                for (int i = 0; i < 8; i++) lbl[i] = radial_action_label(radial_keys_[i]);
+                overlay_->set_labels(lbl);
                 overlay_->show(haptic_side_);
+            }
         }
 
         prev_x_ = pad_x;

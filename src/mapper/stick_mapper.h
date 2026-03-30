@@ -10,7 +10,7 @@ namespace windeck::mapper {
 
 class StickMapper {
 public:
-    void apply_config(const config::StickConfig& cfg, float overlap);
+    void apply_config(const config::StickConfig& cfg);
 
     void map(int16_t raw_x, int16_t raw_y,
              int16_t& out_x, int16_t& out_y,
@@ -23,6 +23,8 @@ private:
     float inner_ = 0.05f;
     float outer_ = 0.95f;
     config::ResponseCurve curve_ = config::ResponseCurve::Linear;
+    bool invert_x_ = false;
+    bool invert_y_ = false;
 
     modes::DirectionalMode directional_;
     modes::MouseMode mouse_;
