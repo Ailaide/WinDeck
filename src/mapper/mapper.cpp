@@ -89,6 +89,7 @@ MapResult Mapper::map_and_flush(const neptune::InputReport& input,
     MapResult result = map_unlocked(input, synth);
     left_touchpad_.tick_inertia(synth);
     right_touchpad_.tick_inertia(synth);
+    synth.reconcile_holds();   // resolve WASD/Arrows holds across all sources
     synth.flush();
     return result;
 }

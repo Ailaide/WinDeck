@@ -21,6 +21,17 @@ public:
     // Set key state: press if down=true, release if down=false.
     void key_set(uint16_t vk, bool down);
 
+    // Declare a key as wanted this frame (aggregated across all sources).
+    // reconcile_holds() then presses wanted keys and releases held keys that no
+    // source wants -- so multiple directional sources (D-pad + stick in WASD/
+    // Arrows) mapping to the same key don't fight over press/release.
+    void key_hold(uint16_t vk);
+
+    // Resolve held keys for the frame: press what is wanted, release managed
+    // keys no longer wanted. Call once per mapped frame before flush(); NOT on
+    // inertia-only ticks (held keys must persist between HID reports).
+    void reconcile_holds();
+
     // Press a mouse button. index: 0=left, 1=right, 2=middle.
     void mouse_press(uint8_t index);
 
@@ -46,6 +57,11 @@ public:
 private:
     // Track pressed state for up to 256 VK codes
     std::array<bool, 256> key_state_{};
+
+    // Per-frame "wanted" set for held keys, plus which keys the hold mechanism
+    // currently owns (so reconcile only releases keys it manages).
+    std::array<bool, 256> key_want_{};
+    std::array<bool, 256> key_managed_{};
 
     // Mouse button state (left, right, middle)
     std::array<bool, 3> mouse_state_{};

@@ -59,16 +59,24 @@ void DirectionalMode::update_discrete(bool up, bool down, bool left, bool right,
     apply(up, down, left, right, synth);
 }
 
-void DirectionalMode::release_all(windeck::output::SyntheticInput& synth) {
-    apply(false, false, false, false, synth);
+void DirectionalMode::release_all(windeck::output::SyntheticInput& /*synth*/) {
+    // No direct release: by not declaring the keys, reconcile_holds() drops them
+    // when no source wants them, and synth.release_all() clears them on mode
+    // switch / QAM open / shutdown. Releasing here would clobber a key another
+    // directional source is still holding.
+    held_up_ = held_down_ = held_left_ = held_right_ = false;
 }
 
 void DirectionalMode::apply(bool up, bool down, bool left, bool right,
                               windeck::output::SyntheticInput& synth) {
-    synth.key_set(key_up_, up);
-    synth.key_set(key_down_, down);
-    synth.key_set(key_left_, left);
-    synth.key_set(key_right_, right);
+    // Declare wanted keys only; SyntheticInput::reconcile_holds() presses and
+    // releases them once per frame. This lets multiple directional sources
+    // (D-pad + stick, both in WASD/Arrows) share the same keys without fighting:
+    // a centered source no longer releases a held source's key every frame.
+    if (up)    synth.key_hold(key_up_);
+    if (down)  synth.key_hold(key_down_);
+    if (left)  synth.key_hold(key_left_);
+    if (right) synth.key_hold(key_right_);
 
     held_up_ = up;
     held_down_ = down;
