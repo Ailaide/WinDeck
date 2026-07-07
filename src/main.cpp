@@ -54,6 +54,9 @@ static BOOL WINAPI console_handler(DWORD event) {
     return FALSE;
 }
 
+// Open the Windows touch keyboard via its taskbar button (UI Automation) — the
+// method that reliably works on Win11. It only opens the keyboard (the toggle's
+// close side is unreliable on Win11, and the user closes it themselves).
 static void open_touch_keyboard() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
@@ -66,7 +69,6 @@ static void open_touch_keyboard() {
         return;
     }
 
-    // Find the system tray notification area
     HWND tray_wnd = FindWindowW(L"Shell_TrayWnd", nullptr);
     if (!tray_wnd) {
         spdlog::warn("Shell_TrayWnd not found");
@@ -84,7 +86,7 @@ static void open_touch_keyboard() {
         return;
     }
 
-    // Search for a button with AutomationId "TipBandButtonID" (the touch keyboard tray button)
+    // Touch keyboard tray button (AutomationId "TipBandButtonID", localized-name fallback).
     IUIAutomationCondition* cond_id = nullptr;
     VARIANT var_id;
     var_id.vt = VT_BSTR;
@@ -99,7 +101,6 @@ static void open_touch_keyboard() {
     }
 
     if (!kbd_btn) {
-        // Fallback: search by Name containing "keyboard" (localization-safe via partial match)
         IUIAutomationCondition* cond_type = nullptr;
         VARIANT var_type;
         var_type.vt = VT_I4;
@@ -123,7 +124,6 @@ static void open_touch_keyboard() {
                     elem->get_CurrentName(&name);
                     if (name) {
                         std::wstring wname(name);
-                        // Check common names across localizations
                         if (wname.find(L"keyboard") != std::wstring::npos ||
                             wname.find(L"Keyboard") != std::wstring::npos ||
                             wname.find(L"Touch") != std::wstring::npos) {
@@ -139,28 +139,19 @@ static void open_touch_keyboard() {
     }
 
     if (kbd_btn) {
-        // Try TogglePattern first (toggle button), then InvokePattern as fallback
+        // Press the button (TogglePattern, else Invoke) to open the keyboard.
         IUIAutomationTogglePattern* toggle = nullptr;
-        hr = kbd_btn->GetCurrentPatternAs(UIA_TogglePatternId,
+        HRESULT tr = kbd_btn->GetCurrentPatternAs(UIA_TogglePatternId,
             __uuidof(IUIAutomationTogglePattern), reinterpret_cast<void**>(&toggle));
-        if (SUCCEEDED(hr) && toggle) {
-            hr = toggle->Toggle();
-            spdlog::info("Touch keyboard toggled via TogglePattern (hr={:#x})",
-                static_cast<unsigned>(hr));
+        if (SUCCEEDED(tr) && toggle) {
+            toggle->Toggle();
             toggle->Release();
         } else {
             IUIAutomationInvokePattern* invoke = nullptr;
-            hr = kbd_btn->GetCurrentPatternAs(UIA_InvokePatternId,
+            tr = kbd_btn->GetCurrentPatternAs(UIA_InvokePatternId,
                 __uuidof(IUIAutomationInvokePattern), reinterpret_cast<void**>(&invoke));
-            if (SUCCEEDED(hr) && invoke) {
-                hr = invoke->Invoke();
-                spdlog::info("Touch keyboard toggled via InvokePattern (hr={:#x})",
-                    static_cast<unsigned>(hr));
-                invoke->Release();
-            } else {
-                spdlog::warn("No Toggle or Invoke pattern on keyboard button: {:#x}",
-                    static_cast<unsigned>(hr));
-            }
+            if (SUCCEEDED(tr) && invoke) { invoke->Invoke(); invoke->Release(); }
+            else spdlog::warn("Touch keyboard button exposes no Toggle/Invoke pattern");
         }
         kbd_btn->Release();
     } else {
@@ -171,6 +162,19 @@ static void open_touch_keyboard() {
     tray_elem->Release();
     uia->Release();
     CoUninitialize();
+}
+
+// Open the touch keyboard on a detached thread (COM/UIA), guarded so only one
+// request is in flight at a time. Used by the Quick Access button and the
+// profile name-entry field; the user closes the keyboard themselves.
+static void spawn_touch_keyboard() {
+    static std::atomic<bool> in_flight{false};
+    if (!in_flight.exchange(true, std::memory_order_acq_rel)) {
+        std::thread([] {
+            open_touch_keyboard();
+            in_flight.store(false, std::memory_order_release);
+        }).detach();
+    }
 }
 
 static void input_loop(windeck::neptune::NeptuneDevice& device,
@@ -231,7 +235,9 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                 if (rising & btn::kLShoulder) qam.cycle_category(-1);
                 if (rising & btn::kRShoulder) qam.cycle_category(1);
                 if (rising & btn::kB) {
-                    if (qam.is_submenu_open()) qam.hide_submenu();
+                    if (qam.is_name_entry()) qam.cancel_name_entry();
+                    else if (qam.is_submenu_open()) qam.hide_submenu();
+                    else if (qam.is_dropdown_open()) qam.close_dropdown();
                     else qam.hide();
                 }
                 if (rising & btn::kSteam)     qam.hide();
@@ -271,14 +277,8 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
 
                 // Quick Access button -> touch keyboard
                 if (result.sys_events.quick_access_pressed) {
-                    static std::atomic<bool> keyboard_in_flight{false};
-                    if (!keyboard_in_flight.exchange(true, std::memory_order_acq_rel)) {
-                        spdlog::info("Quick Access button pressed, toggling touch keyboard");
-                        std::thread([] {
-                            open_touch_keyboard();
-                            keyboard_in_flight.store(false, std::memory_order_release);
-                        }).detach();
-                    }
+                    spdlog::info("Quick Access button pressed, opening touch keyboard");
+                    spawn_touch_keyboard();
                 }
             }
         } else if (read_result == 0) {
@@ -405,16 +405,17 @@ int main() {
     mapper.set_overlay(&overlay);
     mapper.set_device(&neptune);
 
-    // Try loading saved profile, fall back to defaults
-    if (!config.load_profile("Default")) {
-        spdlog::info("No saved profile, using defaults");
-        config.save_profile();  // Save default profile for future editing
+    // Load the last-active profile. Default is synthetic (built-in values).
+    std::string startup_profile = config.persisted_active();
+    if (!config.load_profile(startup_profile)) {
+        config.load_profile(windeck::config::Config::kDefaultProfileName);
     }
     auto profile = config.get_profile();
     mapper.apply_profile(profile, synth);
     spdlog::info("Profile '{}' applied", profile.name);
 
     windeck::overlay::QuickAccessOverlay qam(config, mapper, synth);
+    qam.set_keyboard_opener(spawn_touch_keyboard);
 
     // Run input loop
     std::thread input_thread(input_loop,

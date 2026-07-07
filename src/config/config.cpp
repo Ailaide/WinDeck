@@ -337,17 +337,33 @@ Config::Config() {
 
 void Config::ensure_dirs() const {
     std::error_code ec;
-    std::filesystem::create_directories(config_dir_ / "profiles", ec);
+    std::filesystem::create_directories(profiles_dir(), ec);
     if (ec) {
         spdlog::warn("Failed to create profiles directory: {}", ec.message());
     }
 }
 
 std::filesystem::path Config::profile_path(const std::string& name) const {
-    return config_dir_ / "profiles" / (name + ".json");
+    return profiles_dir() / (name + ".json");
 }
 
 bool Config::load_profile(const std::string& name) {
+    // "Default" is not a stored profile — it is the hardcoded standard values.
+    // Switching to it just resets to the built-in defaults, so it can never be
+    // edited from the filesystem. Any stray Default.json is removed.
+    if (is_default_name(name)) {
+        Profile def;  // name defaults to "Default"
+        {
+            std::unique_lock lock(mutex_);
+            profile_ = def;
+        }
+        persist_active(name);
+        std::error_code ec;
+        std::filesystem::remove(profile_path(kDefaultProfileName), ec);
+        spdlog::info("Switched to built-in Default values");
+        return true;
+    }
+
     auto path = profile_path(name);
     std::ifstream file(path);
     if (!file.is_open()) {
@@ -360,8 +376,11 @@ bool Config::load_profile(const std::string& name) {
                              std::istreambuf_iterator<char>());
         auto p = profile_from_json(content);
 
-        std::unique_lock lock(mutex_);
-        profile_ = std::move(p);
+        {
+            std::unique_lock lock(mutex_);
+            profile_ = std::move(p);
+        }
+        persist_active(name);
         spdlog::info("Profile '{}' loaded", name);
         return true;
     } catch (const std::exception& e) {
@@ -370,15 +389,7 @@ bool Config::load_profile(const std::string& name) {
     }
 }
 
-bool Config::save_profile() const {
-    Profile copy;
-    std::filesystem::path path;
-    {
-        std::shared_lock lock(mutex_);
-        copy = profile_;
-        path = profile_path(profile_.name);
-    }
-
+bool Config::write_profile(const std::filesystem::path& path, const Profile& p) const {
     try {
         ensure_dirs();
         auto tmp_path = path;
@@ -389,7 +400,7 @@ bool Config::save_profile() const {
                 spdlog::error("Cannot write profile to {}", tmp_path.string());
                 return false;
             }
-            file << profile_to_json(copy);
+            file << profile_to_json(p);
         }
         std::error_code ec;
         std::filesystem::rename(tmp_path, path, ec);
@@ -398,12 +409,30 @@ bool Config::save_profile() const {
             std::filesystem::remove(tmp_path, ec);
             return false;
         }
-        spdlog::info("Profile '{}' saved", copy.name);
         return true;
     } catch (const std::exception& e) {
         spdlog::error("Failed to save profile: {}", e.what());
         return false;
     }
+}
+
+bool Config::save_profile() const {
+    Profile copy;
+    std::filesystem::path path;
+    {
+        std::shared_lock lock(mutex_);
+        // Default is immutable — never overwrite it on disk.
+        if (is_default_name(profile_.name)) return true;
+        copy = profile_;
+        path = profile_path(profile_.name);
+    }
+
+    if (!write_profile(path, copy)) {
+        spdlog::error("Failed to save profile '{}'", copy.name);
+        return false;
+    }
+    spdlog::info("Profile '{}' saved", copy.name);
+    return true;
 }
 
 Profile Config::get_profile() const {
@@ -418,7 +447,7 @@ void Config::set_profile(const Profile& profile) {
 
 std::vector<std::string> Config::list_profiles() const {
     std::vector<std::string> names;
-    auto dir = config_dir_ / "profiles";
+    auto dir = profiles_dir();
     if (!std::filesystem::exists(dir)) return names;
 
     for (auto& entry : std::filesystem::directory_iterator(dir)) {
@@ -427,6 +456,98 @@ std::vector<std::string> Config::list_profiles() const {
         }
     }
     return names;
+}
+
+std::string Config::active_name() const {
+    std::shared_lock lock(mutex_);
+    return profile_.name;
+}
+
+std::filesystem::path Config::active_marker_path() const {
+    return profiles_dir() / ".active";
+}
+
+void Config::persist_active(const std::string& name) const {
+    std::ofstream file(active_marker_path());
+    if (file.is_open()) {
+        file << name;
+    } else {
+        spdlog::warn("Cannot persist active-profile marker to {}", active_marker_path().string());
+    }
+}
+
+std::string Config::persisted_active() const {
+    std::ifstream file(active_marker_path());
+    if (file.is_open()) {
+        std::string name;
+        std::getline(file, name);
+        if (!name.empty()) return name;
+    }
+    return kDefaultProfileName;
+}
+
+bool Config::create_from_default(const std::string& name) {
+    if (name.empty() || is_default_name(name)) {
+        spdlog::warn("Refusing to create profile with reserved/empty name '{}'", name);
+        return false;
+    }
+    Profile p;         // standard Default mapping
+    p.name = name;
+    {
+        std::unique_lock lock(mutex_);
+        profile_ = p;
+    }
+    if (!save_profile()) return false;
+    persist_active(name);
+    spdlog::info("Created profile '{}' from Default", name);
+    return true;
+}
+
+bool Config::delete_profile(const std::string& name) {
+    if (is_default_name(name)) {
+        spdlog::warn("Refusing to delete the Default profile");
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::remove(profile_path(name), ec);
+    if (ec) {
+        spdlog::warn("Failed to delete profile '{}': {}", name, ec.message());
+        return false;
+    }
+    // No concurrent profile writer can race this read-then-reset: delete runs
+    // only on the input thread with name-entry off; the sole other writer
+    // (end_name_entry on the overlay thread) is a no-op unless name_entry_ is set
+    // (only by this same input thread); and Config's shared_mutex makes each
+    // profile_ access atomic.
+    bool was_active;
+    {
+        std::shared_lock lock(mutex_);
+        was_active = (profile_.name == name);
+    }
+    if (was_active) load_profile(kDefaultProfileName);
+    spdlog::info("Deleted profile '{}'", name);
+    return true;
+}
+
+std::string Config::unique_name(const std::string& base) const {
+    auto names = list_profiles();
+    auto taken = [&](const std::string& n) {
+        return is_default_name(n) ||
+               std::find(names.begin(), names.end(), n) != names.end();
+    };
+    if (base.empty()) {
+        for (int i = 1; i < 1000; i++) {
+            std::string candidate = "Custom " + std::to_string(i);
+            if (!taken(candidate)) return candidate;
+        }
+        return "Custom";
+    }
+    if (!taken(base)) return base;
+    for (int i = 2; i < 1000; i++) {
+        std::string candidate = base + " " + std::to_string(i);
+        if (!taken(candidate)) return candidate;
+    }
+    return base;
 }
 
 } // namespace windeck::config

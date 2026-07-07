@@ -5,6 +5,17 @@
 
 namespace windeck::overlay {
 
+// Custom overlay-thread messages for profile name entry (handled in on_app_message).
+static constexpr UINT WM_QAM_KBD_ON      = WM_APP + 20;
+static constexpr UINT WM_QAM_KBD_OFF     = WM_APP + 21;
+static constexpr UINT WM_QAM_NAME_COMMIT = WM_APP + 22;
+static constexpr UINT WM_QAM_NAME_CANCEL = WM_APP + 23;
+
+// Active name-entry target for the low-level keyboard hook, plus modifier state.
+static std::atomic<QuickAccessOverlay*> s_name_target{nullptr};
+static bool s_kb_shift = false;
+static bool s_kb_caps  = false;
+
 // --- Mode cycling helpers ---
 
 static config::StickMode next_stick_mode(config::StickMode m) {
@@ -273,22 +284,44 @@ QuickAccessOverlay::QuickAccessOverlay(windeck::config::Config& config,
     start();
 }
 
+QuickAccessOverlay::~QuickAccessOverlay() {
+    // Ensure the low-level keyboard hook is removed on teardown. Post to the
+    // overlay thread (the hook's owner) so kbd_hook_ is only ever touched there;
+    // the message drains before ~OverlayBase posts WM_CLOSE. If the process is
+    // torn down first, the OS reclaims the global hook.
+    s_name_target.store(nullptr, std::memory_order_relaxed);
+    if (hwnd()) PostMessageW(hwnd(), WM_QAM_KBD_OFF, 0, 0);
+}
+
 void QuickAccessOverlay::show() {
     visible_.store(true, std::memory_order_relaxed);
     cursor_.store(kZoneMain, std::memory_order_relaxed); // start on first main tile
     submenu_open_.store(false, std::memory_order_relaxed);
+    dropdown_open_.store(false, std::memory_order_relaxed);
+    refresh_profiles();
+    // On the immutable Default the tiles are read-only, so start the cursor on
+    // the profile bar where the user can switch or create a profile.
+    if (default_active_.load(std::memory_order_relaxed))
+        cursor_.store(kZoneProfiles, std::memory_order_relaxed);
     post_show();
 }
 
 void QuickAccessOverlay::hide() {
+    if (name_entry_.load(std::memory_order_relaxed)) end_name_entry(false);
     visible_.store(false, std::memory_order_relaxed);
     submenu_open_.store(false, std::memory_order_relaxed);
+    dropdown_open_.store(false, std::memory_order_relaxed);
     post_hide();
 }
 
 // --- Navigation ---
 
 void QuickAccessOverlay::navigate(int dx, int dy) {
+    if (name_entry_.load(std::memory_order_relaxed)) return;
+    if (dropdown_open_.load(std::memory_order_relaxed)) {
+        navigate_dropdown(dx, dy);
+        return;
+    }
     if (submenu_open_.load(std::memory_order_relaxed)) {
         navigate_submenu(dx, dy);
         return;
@@ -302,14 +335,15 @@ void QuickAccessOverlay::navigate_main(int dx, int dy) {
     // Determine which zone and position within zone
     struct ZoneInfo { int start; int cols; };
     ZoneInfo zones[] = {
-        {kZoneTop,    kTopTiles},        // 0: top row (2: LB, RB)
-        {kZoneMain,   kCols},            // 1: main row 0 (3)
-        {kZoneMain+3, kCols},            // 2: main row 1 (3)
-        {kZoneMini1,  kMiniRow1},        // 3: mini row 1 (4)
-        {kZoneMini2,  kMiniRow2},        // 4: mini row 2 (4)
-        {kZoneBottom, kBottomTiles},     // 5: bottom row (4)
+        {kZoneProfiles, kProfileItems},  // 0: profile bar (dropdown, New, Delete)
+        {kZoneTop,    kTopTiles},        // 1: top row (2: LB, RB)
+        {kZoneMain,   kCols},            // 2: main row 0 (3)
+        {kZoneMain+3, kCols},            // 3: main row 1 (3)
+        {kZoneMini1,  kMiniRow1},        // 4: mini row 1 (4)
+        {kZoneMini2,  kMiniRow2},        // 5: mini row 2 (4)
+        {kZoneBottom, kBottomTiles},     // 6: bottom row (4)
     };
-    constexpr int kNumZones = 6;
+    constexpr int kNumZones = 7;
 
     int zone_idx = -1;
     int col = 0;
@@ -338,12 +372,29 @@ void QuickAccessOverlay::navigate_main(int dx, int dy) {
 }
 
 void QuickAccessOverlay::activate() {
+    if (name_entry_.load(std::memory_order_relaxed)) {
+        end_name_entry(true);
+        return;
+    }
+    if (dropdown_open_.load(std::memory_order_relaxed)) {
+        select_dropdown();
+        return;
+    }
     if (submenu_open_.load(std::memory_order_relaxed)) {
         activate_submenu();
         return;
     }
 
     int cur = cursor_.load(std::memory_order_relaxed);
+
+    // Profile bar: open dropdown / New / Delete
+    if (cur >= kZoneProfiles && cur < kZoneProfiles + kProfileItems) {
+        activate_profile_item(cur - kZoneProfiles);
+        return;
+    }
+
+    // Default profile is immutable — tiles are read-only.
+    if (default_active_.load(std::memory_order_relaxed)) return;
 
     // Main tiles: cycle mode
     if (cur >= kZoneMain && cur < kZoneMain + kTiles) {
@@ -368,6 +419,8 @@ void QuickAccessOverlay::activate() {
 }
 
 void QuickAccessOverlay::press_x() {
+    if (name_entry_.load(std::memory_order_relaxed)) return;
+    if (dropdown_open_.load(std::memory_order_relaxed)) return;
     if (submenu_open_.load(std::memory_order_relaxed)) {
         // X in submenu: cycle remap backward for radial sector
         std::lock_guard lock(tiles_mtx_);
@@ -413,6 +466,10 @@ void QuickAccessOverlay::press_x() {
 
     int cur = cursor_.load(std::memory_order_relaxed);
 
+    // Profile bar and immutable Default: X does nothing here.
+    if (cur >= kZoneProfiles) return;
+    if (default_active_.load(std::memory_order_relaxed)) return;
+
     // Main tiles: enter submenu
     if (cur >= kZoneMain && cur < kZoneMain + kTiles) {
         enter_submenu();
@@ -428,6 +485,9 @@ void QuickAccessOverlay::hide_submenu() {
 }
 
 void QuickAccessOverlay::cycle_category(int direction) {
+    if (name_entry_.load(std::memory_order_relaxed)) return;
+    if (dropdown_open_.load(std::memory_order_relaxed)) return;
+
     // Handle radial remap in submenu
     if (submenu_open_.load(std::memory_order_relaxed)) {
         std::lock_guard lock(tiles_mtx_);
@@ -455,6 +515,9 @@ void QuickAccessOverlay::cycle_category(int direction) {
         }
         return;
     }
+
+    // Default profile is immutable — remapping is read-only.
+    if (default_active_.load(std::memory_order_relaxed)) return;
 
     int cur = cursor_.load(std::memory_order_relaxed);
     auto bid = button_id_for_cursor(cur);
@@ -579,7 +642,240 @@ bool QuickAccessOverlay::on_app_message(UINT msg, WPARAM wp, LPARAM /*lp*/) {
         invalidate();
         return true;
     }
+    if (msg == WM_QAM_KBD_ON) {
+        s_kb_shift = false;
+        s_kb_caps = (GetKeyState(VK_CAPITAL) & 1) != 0;
+        if (!kbd_hook_)
+            kbd_hook_ = SetWindowsHookExW(WH_KEYBOARD_LL, &QuickAccessOverlay::kbd_hook_proc,
+                                          GetModuleHandleW(nullptr), 0);
+        return true;
+    }
+    if (msg == WM_QAM_KBD_OFF) {
+        if (kbd_hook_) { UnhookWindowsHookEx(kbd_hook_); kbd_hook_ = nullptr; }
+        return true;
+    }
+    if (msg == WM_QAM_NAME_COMMIT) { end_name_entry(true);  return true; }
+    if (msg == WM_QAM_NAME_CANCEL) { end_name_entry(false); return true; }
     return false;
+}
+
+// --- Profile bar ---
+
+static std::wstring to_wide(const std::string& s) {
+    if (s.empty()) return L"";
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), w.data(), n);
+    return w;
+}
+
+static std::string to_utf8(const std::wstring& w) {
+    if (w.empty()) return "";
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
+                                nullptr, 0, nullptr, nullptr);
+    std::string s(static_cast<size_t>(n), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
+                        s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+void QuickAccessOverlay::refresh_profiles() {
+    auto files = config_.list_profiles();
+    std::string active = config_.active_name();
+
+    // "Default" is synthetic (built-in values, never a file). Drop any stray
+    // file named "Default" and always present it as the first entry.
+    files.erase(std::remove(files.begin(), files.end(),
+                            std::string(config::Config::kDefaultProfileName)),
+                files.end());
+    std::sort(files.begin(), files.end());
+
+    std::vector<std::string> names;
+    names.push_back(config::Config::kDefaultProfileName);
+    for (auto& f : files) names.push_back(f);
+
+    default_active_.store(active == config::Config::kDefaultProfileName, std::memory_order_relaxed);
+
+    std::lock_guard lock(tiles_mtx_);
+    dd_names_.clear();
+    dd_active_ = 0;
+    for (size_t i = 0; i < names.size(); i++) {
+        dd_names_.push_back(to_wide(names[i]));
+        if (names[i] == active) dd_active_ = static_cast<int>(i);
+    }
+    dd_cursor_ = dd_active_;
+}
+
+void QuickAccessOverlay::apply_active_profile() {
+    auto profile = config_.get_profile();
+    mapper_.apply_profile(profile, synth_);
+    update_tiles(profile);   // also refreshes remap_display_ via refresh_all_locked
+    refresh_profiles();
+}
+
+void QuickAccessOverlay::navigate_dropdown(int /*dx*/, int dy) {
+    if (dy == 0) return;
+    {
+        std::lock_guard lock(tiles_mtx_);
+        int n = static_cast<int>(dd_names_.size());
+        if (n == 0) return;
+        dd_cursor_ = (dd_cursor_ + dy + n) % n;
+    }
+    invalidate();
+}
+
+void QuickAccessOverlay::select_dropdown() {
+    std::string name;
+    {
+        std::lock_guard lock(tiles_mtx_);
+        if (dd_cursor_ >= 0 && dd_cursor_ < static_cast<int>(dd_names_.size()))
+            name = to_utf8(dd_names_[dd_cursor_]);
+    }
+    dropdown_open_.store(false, std::memory_order_relaxed);
+    if (!name.empty()) {
+        config_.save_profile();   // persist edits to the outgoing profile (no-op for Default)
+        if (config_.load_profile(name)) apply_active_profile();
+    }
+    invalidate();
+}
+
+void QuickAccessOverlay::close_dropdown() {
+    dropdown_open_.store(false, std::memory_order_relaxed);
+    invalidate();
+}
+
+void QuickAccessOverlay::activate_profile_item(int item) {
+    if (item == 0) {
+        // Open the dropdown list, starting on the active profile.
+        {
+            std::lock_guard lock(tiles_mtx_);
+            dd_cursor_ = dd_active_;
+        }
+        dropdown_open_.store(true, std::memory_order_relaxed);
+        invalidate();
+    } else if (item == 1) {
+        // New: prompt for a name, then create a profile from the standard Default.
+        begin_name_entry();
+    } else if (item == 2) {
+        // Delete the active profile (never Default); config falls back to Default.
+        std::string active = config_.active_name();
+        if (config_.is_default_name(active)) { invalidate(); return; }
+        if (config_.delete_profile(active)) {
+            apply_active_profile();
+        }
+        invalidate();
+    }
+}
+
+// --- Profile name entry ---
+
+static std::string sanitize_profile_name(const std::string& in) {
+    std::string out;
+    for (char c : in) {
+        if (c == '\\' || c == '/' || c == ':' || c == '*' || c == '?' ||
+            c == '"' || c == '<' || c == '>' || c == '|') continue;
+        if (static_cast<unsigned char>(c) < 0x20) continue;
+        out.push_back(c);
+    }
+    size_t a = out.find_first_not_of(' ');
+    if (a == std::string::npos) return "";
+    size_t b = out.find_last_not_of(' ');
+    return out.substr(a, b - a + 1);
+}
+
+void QuickAccessOverlay::begin_name_entry() {
+    if (name_entry_.exchange(true, std::memory_order_relaxed)) return;
+    {
+        std::lock_guard lock(tiles_mtx_);
+        name_text_.clear();
+    }
+    s_name_target.store(this, std::memory_order_relaxed);
+    PostMessageW(hwnd(), WM_QAM_KBD_ON, 0, 0);
+    if (open_kbd_) open_kbd_();   // open the Windows touch keyboard
+    invalidate();
+}
+
+void QuickAccessOverlay::end_name_entry(bool commit) {
+    if (!name_entry_.exchange(false, std::memory_order_relaxed)) return;
+    s_name_target.store(nullptr, std::memory_order_relaxed);
+    PostMessageW(hwnd(), WM_QAM_KBD_OFF, 0, 0);
+
+    if (commit) {
+        std::wstring wname;
+        {
+            std::lock_guard lock(tiles_mtx_);
+            wname = name_text_;
+        }
+        std::string name = config_.unique_name(sanitize_profile_name(to_utf8(wname)));
+        config_.save_profile();   // persist edits to the outgoing profile (no-op for Default)
+        if (config_.create_from_default(name)) {
+            apply_active_profile();
+        }
+    }
+    invalidate();
+}
+
+void QuickAccessOverlay::cancel_name_entry() {
+    end_name_entry(false);
+}
+
+void QuickAccessOverlay::name_append(wchar_t c) {
+    {
+        std::lock_guard lock(tiles_mtx_);
+        if (name_text_.size() < 40) name_text_.push_back(c);
+    }
+    invalidate();
+}
+
+void QuickAccessOverlay::name_backspace() {
+    {
+        std::lock_guard lock(tiles_mtx_);
+        if (!name_text_.empty()) name_text_.pop_back();
+    }
+    invalidate();
+}
+
+LRESULT CALLBACK QuickAccessOverlay::kbd_hook_proc(int code, WPARAM wp, LPARAM lp) {
+    auto* target = s_name_target.load(std::memory_order_relaxed);
+    if (code == HC_ACTION && target) {
+        auto* kb = reinterpret_cast<KBDLLHOOKSTRUCT*>(lp);
+        if (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN) {
+            DWORD vk = kb->vkCode;
+            // Injected Unicode (touch keyboard) arrives as VK_PACKET with the
+            // UTF-16 code unit in scanCode; ToUnicodeEx cannot translate it.
+            if (vk == VK_PACKET) {
+                wchar_t ch = static_cast<wchar_t>(kb->scanCode);
+                if (ch >= 0x20) target->name_append(ch);
+                return 1;
+            }
+            if (vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT) { s_kb_shift = true; return 1; }
+            if (vk == VK_CAPITAL) { s_kb_caps = !s_kb_caps; return 1; }
+            if (vk == VK_RETURN)  { PostMessageW(target->hwnd(), WM_QAM_NAME_COMMIT, 0, 0); return 1; }
+            if (vk == VK_ESCAPE)  { PostMessageW(target->hwnd(), WM_QAM_NAME_CANCEL, 0, 0); return 1; }
+            if (vk == VK_BACK)    { target->name_backspace(); return 1; }
+
+            BYTE ks[256] = {};
+            if (s_kb_shift) ks[VK_SHIFT]   = 0x80;
+            if (s_kb_caps)  ks[VK_CAPITAL] = 0x01;
+            wchar_t buf[8] = {};
+            // Translate with the foreground window's keyboard layout so the active
+            // input language (e.g. Russian) is honored. Flag 0x4 leaves the kernel
+            // keyboard state untouched (no dead-key leak into the game).
+            HWND fg = GetForegroundWindow();
+            DWORD tid = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
+            HKL layout = GetKeyboardLayout(tid);
+            int n = ToUnicodeEx(vk, kb->scanCode, ks, buf, 8, 0x4, layout);
+            for (int i = 0; i < n; i++)
+                if (buf[i] >= 0x20) target->name_append(buf[i]);
+            return 1;  // swallow so keystrokes never reach the game
+        }
+        if (wp == WM_KEYUP || wp == WM_SYSKEYUP) {
+            DWORD vk = kb->vkCode;
+            if (vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT) s_kb_shift = false;
+            return 1;
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
 }
 
 void QuickAccessOverlay::navigate_submenu(int dx, int dy) {
@@ -953,6 +1249,8 @@ HRESULT QuickAccessOverlay::create_child_resources() {
     if (FAILED(hr)) return hr;
     hr = rt_->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &br_dim_overlay_);
     if (FAILED(hr)) return hr;
+    hr = rt_->CreateSolidColorBrush(D2D1::ColorF(0.86f, 0.32f, 0.28f), &br_danger_);
+    if (FAILED(hr)) return hr;
 
     return S_OK;
 }
@@ -967,6 +1265,7 @@ void QuickAccessOverlay::release_child_resources() {
     rel(br_slider_bg_);
     rel(br_dim_text_);
     rel(br_dim_overlay_);
+    rel(br_danger_);
 }
 
 // --- Drawing ---
@@ -1002,6 +1301,11 @@ void QuickAccessOverlay::on_paint() {
     {
         std::lock_guard lock(tiles_mtx_);
 
+        // Reserve the profile bar row at the top (drawn last so its open
+        // dropdown list stacks above the tiles below it).
+        float profile_bar_y = y;
+        y += kProfileRowH + kProfileGap;
+
         // --- Top row: LB (left), RB (right) ---
         float tw = static_cast<float>(kSmallTileW);
         draw_small_tile(x, y, tw, kTopTileLabels[0], remap_display_[0], cur == kZoneTop);
@@ -1010,11 +1314,12 @@ void QuickAccessOverlay::on_paint() {
         y += kSmallTileH + kGap;
 
         // --- Main 3x2 tiles ---
+        float main_y = y;
         for (int i = 0; i < kTiles; i++) {
             int col = i % kCols;
             int row = i / kCols;
             float tx = static_cast<float>(kPad + col * (kTileW + kGap));
-            float ty = my + static_cast<float>(kPad + kSmallTileH + kGap + row * (kTileH + kGap));
+            float ty = main_y + static_cast<float>(row * (kTileH + kGap));
 
             D2D1_ROUNDED_RECT tile;
             tile.rect = D2D1::RectF(tx, ty, tx + kTileW, ty + kTileH);
@@ -1058,6 +1363,19 @@ void QuickAccessOverlay::on_paint() {
             int remap_idx = kTopTiles + kMiniRow1 + kMiniRow2 + i;
             draw_small_tile(bx, y, tw, kBottomLabels[i], remap_display_[remap_idx], cur == kZoneBottom + i);
         }
+
+        // Immutable Default: dim the tile area to show it is read-only.
+        if (default_active_.load(std::memory_order_relaxed) &&
+            !submenu_open_.load(std::memory_order_relaxed)) {
+            float tiles_top = profile_bar_y + kProfileRowH + kProfileGap - 4.0f;
+            rt_->FillRectangle(
+                D2D1::RectF(2.0f, tiles_top, static_cast<float>(kTotalW) - 2.0f,
+                            my + static_cast<float>(kMenuH) - 2.0f),
+                br_dim_overlay_);
+        }
+
+        // Profile bar (drawn last so the open dropdown list stacks on top).
+        draw_profile_bar(profile_bar_y);
 
         // Submenu overlay (if open)
         if (submenu_open_.load(std::memory_order_relaxed))
@@ -1220,6 +1538,24 @@ void QuickAccessOverlay::draw_action_bar() {
     bool is_submenu = submenu_open_.load(std::memory_order_relaxed);
     int cur = cursor_.load(std::memory_order_relaxed);
 
+    if (name_entry_.load(std::memory_order_relaxed)) {
+        draw_glyph(L'A'); draw_text_hint(L"Confirm", 80);
+        draw_glyph(L'B'); draw_text_hint(L"Cancel", 70);
+        return;
+    }
+    if (dropdown_open_.load(std::memory_order_relaxed)) {
+        const wchar_t* arrows = L"\u25B2\u25BC";
+        draw_text_hint(arrows, 30); draw_text_hint(L"Select", 60);
+        draw_glyph(L'A'); draw_text_hint(L"Switch", 70);
+        draw_glyph(L'B'); draw_text_hint(L"Cancel", 70);
+        return;
+    }
+    if (!is_submenu && default_active_.load(std::memory_order_relaxed) && cur < kZoneProfiles) {
+        draw_text_hint(L"Default profile is read-only", 240);
+        draw_glyph(L'B'); draw_text_hint(L"Close", 60);
+        return;
+    }
+
     if (is_submenu) {
         // Submenu action bar depends on selected param type
         ParamType pt = ParamType::Slider;
@@ -1241,6 +1577,13 @@ void QuickAccessOverlay::draw_action_bar() {
             draw_glyph(L'A'); draw_text_hint(L"Change", 80);
         }
         draw_glyph(L'B'); draw_text_hint(L"Back", 50);
+
+    } else if (cur >= kZoneProfiles && cur < kZoneProfiles + kProfileItems) {
+        // Profile bar
+        int item = cur - kZoneProfiles;
+        draw_glyph(L'A');
+        draw_text_hint(item == 0 ? L"Open list" : item == 1 ? L"New profile" : L"Delete", 120);
+        draw_glyph(L'B'); draw_text_hint(L"Close", 60);
 
     } else if (cur >= kZoneMain && cur < kZoneMain + kTiles) {
         // Main tiles
@@ -1304,9 +1647,20 @@ void QuickAccessOverlay::draw_description() {
         std::lock_guard lock(tiles_mtx_);
         if (sub_cursor_ >= 0 && sub_cursor_ < static_cast<int>(sub_descs_.size()))
             desc = sub_descs_[sub_cursor_];
+    } else if (name_entry_.load(std::memory_order_relaxed)) {
+        desc = L"Type a name for the new profile on the touch keyboard, then Enter or A to confirm.";
+    } else if (dropdown_open_.load(std::memory_order_relaxed)) {
+        desc = L"Choose a profile to switch to. Default is locked and always available.";
     } else {
         int cur = cursor_.load(std::memory_order_relaxed);
-        if (cur >= kZoneMain && cur < kZoneMain + kTiles) {
+        if (cur >= kZoneProfiles && cur < kZoneProfiles + kProfileItems) {
+            int item = cur - kZoneProfiles;
+            desc = item == 0 ? L"Switch the active profile. Default is a locked, read-only Xbox mapping."
+                 : item == 1 ? L"Create a new editable profile from the standard Default mapping."
+                             : L"Delete the selected profile. The Default profile cannot be deleted.";
+        } else if (default_active_.load(std::memory_order_relaxed)) {
+            desc = L"Default is a read-only standard Xbox mapping. Press New to make an editable copy.";
+        } else if (cur >= kZoneMain && cur < kZoneMain + kTiles) {
             desc = kMainDescriptions[cur - kZoneMain];
         } else {
             desc = L"Use LB/RB to switch category, A/X to cycle action.";
@@ -1327,6 +1681,131 @@ void QuickAccessOverlay::draw_description() {
         right_edge - static_cast<float>(kPad) - 4.0f, y + kDescAreaH);
     rt_->DrawText(desc.c_str(), static_cast<UINT32>(desc.size()),
                   desc_fmt_, dr, br_dim_text_,
+                  D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+}
+
+void QuickAccessOverlay::draw_profile_bar(float y) {
+    if (!rt_ || !action_fmt_ || !mini_fmt_) return;
+
+    if (name_entry_.load(std::memory_order_relaxed)) {
+        draw_name_entry(y);
+        return;
+    }
+
+    int cur = cursor_.load(std::memory_order_relaxed);
+    const float top = y;
+    const float h = static_cast<float>(kProfileRowH);
+    const float left = static_cast<float>(kPad);
+    const float right = static_cast<float>(kTotalW - kPad);
+    const float label_w = 62.0f;
+    const float btn_w = 94.0f;
+    const float btn_gap = 8.0f;
+
+    // "Profile" label
+    D2D1_RECT_F lblr = D2D1::RectF(left, top, left + label_w, top + h);
+    rt_->DrawText(L"Profile", 7, action_fmt_, lblr, br_dim_text_,
+                  D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+
+    float del_x = right - btn_w;
+    float new_x = del_x - btn_gap - btn_w;
+    bool active_default = default_active_.load(std::memory_order_relaxed);
+
+    auto draw_button = [&](float bx, const wchar_t* text, bool focused,
+                           bool enabled, ID2D1SolidColorBrush* txt_brush) {
+        D2D1_ROUNDED_RECT r;
+        r.rect = D2D1::RectF(bx, top, bx + btn_w, top + h);
+        r.radiusX = 6.0f; r.radiusY = 6.0f;
+        rt_->FillRoundedRectangle(r, focused ? br_hover_ : br_sector_);
+        rt_->DrawText(text, static_cast<UINT32>(wcslen(text)), mini_fmt_, r.rect,
+                      enabled ? txt_brush : br_dim_text_,
+                      D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+    };
+
+    // Dropdown box (fills the middle)
+    float dd_left = left + label_w + 8.0f;
+    float dd_right = new_x - 12.0f;
+    std::wstring active_name = (dd_active_ >= 0 && dd_active_ < static_cast<int>(dd_names_.size()))
+                                   ? dd_names_[dd_active_] : L"Default";
+    {
+        D2D1_ROUNDED_RECT r;
+        r.rect = D2D1::RectF(dd_left, top, dd_right, top + h);
+        r.radiusX = 6.0f; r.radiusY = 6.0f;
+        bool focused = (cur == kZoneProfiles);
+        rt_->FillRoundedRectangle(r, focused ? br_hover_ : br_slider_bg_);
+
+        D2D1_RECT_F tr = D2D1::RectF(dd_left + 12.0f, top, dd_right - 26.0f, top + h);
+        rt_->DrawText(active_name.c_str(), static_cast<UINT32>(active_name.size()),
+                      action_fmt_, tr, br_text_,
+                      D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+
+        const wchar_t* chev = dropdown_open_.load(std::memory_order_relaxed) ? L"\u25B4" : L"\u25BE";
+        D2D1_RECT_F cr = D2D1::RectF(dd_right - 24.0f, top, dd_right - 6.0f, top + h);
+        rt_->DrawText(chev, 1, mini_fmt_, cr, br_dim_text_,
+                      D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+    }
+
+    draw_button(new_x, L"New", cur == kZoneProfiles + 1, true, br_active_);
+    draw_button(del_x, L"Delete", cur == kZoneProfiles + 2, !active_default, br_danger_);
+
+    // Open dropdown list (downward over the tiles)
+    if (dropdown_open_.load(std::memory_order_relaxed) && !dd_names_.empty()) {
+        int n = static_cast<int>(dd_names_.size());
+        const float row_h = 30.0f;
+        float list_top = top + h + 4.0f;
+        float list_bottom = list_top + n * row_h + 8.0f;
+
+        D2D1_ROUNDED_RECT box;
+        box.rect = D2D1::RectF(dd_left, list_top, dd_right, list_bottom);
+        box.radiusX = 6.0f; box.radiusY = 6.0f;
+        rt_->FillRoundedRectangle(box, br_center_);
+        rt_->DrawRoundedRectangle(box, br_dim_text_, 1.0f);
+
+        for (int i = 0; i < n; i++) {
+            float ry = list_top + 4.0f + i * row_h;
+            if (i == dd_cursor_) {
+                D2D1_ROUNDED_RECT hr;
+                hr.rect = D2D1::RectF(dd_left + 4.0f, ry, dd_right - 4.0f, ry + row_h);
+                hr.radiusX = 4.0f; hr.radiusY = 4.0f;
+                rt_->FillRoundedRectangle(hr, br_hover_);
+            }
+            bool is_def = (dd_names_[i] == L"Default");
+            bool is_act = (i == dd_active_);
+            D2D1_RECT_F tr = D2D1::RectF(dd_left + 12.0f, ry, dd_right - 62.0f, ry + row_h);
+            rt_->DrawText(dd_names_[i].c_str(), static_cast<UINT32>(dd_names_[i].size()),
+                          action_fmt_, tr, is_act ? br_active_ : br_text_,
+                          D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+            const wchar_t* tag = is_def ? L"locked" : (is_act ? L"active" : L"");
+            if (tag[0]) {
+                D2D1_RECT_F gr = D2D1::RectF(dd_right - 58.0f, ry, dd_right - 10.0f, ry + row_h);
+                rt_->DrawText(tag, static_cast<UINT32>(wcslen(tag)), action_fmt_, gr, br_dim_text_,
+                              D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+            }
+        }
+    }
+}
+
+void QuickAccessOverlay::draw_name_entry(float y) {
+    const float top = y;
+    const float h = static_cast<float>(kProfileRowH);
+    const float left = static_cast<float>(kPad);
+    const float right = static_cast<float>(kTotalW - kPad);
+    const float label_w = 92.0f;
+
+    D2D1_RECT_F lblr = D2D1::RectF(left, top, left + label_w, top + h);
+    rt_->DrawText(L"New name", 8, action_fmt_, lblr, br_dim_text_,
+                  D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+
+    float fx = left + label_w + 8.0f;
+    D2D1_ROUNDED_RECT field;
+    field.rect = D2D1::RectF(fx, top, right, top + h);
+    field.radiusX = 6.0f; field.radiusY = 6.0f;
+    rt_->FillRoundedRectangle(field, br_slider_bg_);
+
+    // on_paint holds tiles_mtx_ while calling this, so read name_text_ directly.
+    std::wstring shown = name_text_;
+    shown += L"|";  // caret
+    D2D1_RECT_F tr = D2D1::RectF(fx + 12.0f, top, right - 12.0f, top + h);
+    rt_->DrawText(shown.c_str(), static_cast<UINT32>(shown.size()), action_fmt_, tr, br_text_,
                   D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
 }
 

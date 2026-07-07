@@ -9,6 +9,7 @@
 #include <atomic>
 #include <mutex>
 #include <vector>
+#include <functional>
 
 namespace windeck::overlay {
 
@@ -23,15 +24,15 @@ public:
     static constexpr int kRows   = 2;
     static constexpr int kTiles  = kCols * kRows;   // 6
     static constexpr int kTileW  = 258;
-    static constexpr int kTileH  = 114;
+    static constexpr int kTileH  = 104;
     static constexpr int kGap    = 12;
     static constexpr int kPad    = 24;
 
     // Small tiles (bumpers/triggers/back buttons): 4 per row
     static constexpr int kSmallTileCols = 4;
-    static constexpr int kSmallTileH = 72;
-    static constexpr int kSmallTileW = (kPad * 2 + kCols * kTileW + (kCols - 1) * kGap - 2 * kPad - (kSmallTileCols - 1) * kGap) / kSmallTileCols;
-    // Simpler: use same total width minus padding and gaps, divided by 4
+    static constexpr int kSmallTileH = 64;
+    // Fill the tile-grid width (kCols tiles + inner gaps) with kSmallTileCols tiles.
+    static constexpr int kSmallTileW = (kCols * kTileW + (kCols - 1) * kGap - (kSmallTileCols - 1) * kGap) / kSmallTileCols;
 
     // Mini tiles (button remap): 4 per row
     static constexpr int kMiniTileCols = 4;
@@ -49,6 +50,10 @@ public:
     // Submenu panel
     static constexpr int kSubmenuW = 420;
 
+    // Profile bar (dropdown + New + Delete), sits above the tiles
+    static constexpr int kProfileRowH = 44;
+    static constexpr int kProfileGap  = 12;
+
     // Item zones (cursor indices)
     static constexpr int kTopTiles    = 2;   // LB, RB
     static constexpr int kMiniRow1    = 4;   // A, B, X, Y
@@ -63,10 +68,15 @@ public:
     static constexpr int kZoneBottom  = kZoneMini2 + kMiniRow2;                  // 18..21
     static constexpr int kTotalItems  = kZoneBottom + kBottomTiles;              // 22
 
+    // Profile bar cursor zone: dropdown, New, Delete
+    static constexpr int kZoneProfiles = kTotalItems;                            // 22..24
+    static constexpr int kProfileItems = 3;
+
     // Window dimensions (menu panel only, without action bar/description)
     static constexpr int kContentW = kPad * 2 + kCols * kTileW + (kCols - 1) * kGap;
     static constexpr int kMenuH =
         kPad +                                              // top padding
+        kProfileRowH + kProfileGap +                        // profile bar (above tiles)
         kSmallTileH + kGap +                                // top row (bumpers/triggers)
         kRows * kTileH + (kRows - 1) * kGap + kGap +       // main 3x2
         kMiniTileH + kMiniGap +                             // mini row 1
@@ -79,6 +89,7 @@ public:
     QuickAccessOverlay(windeck::config::Config& config,
                        windeck::mapper::Mapper& mapper,
                        windeck::output::SyntheticInput& synth);
+    ~QuickAccessOverlay();
 
     void show();
     void hide();
@@ -91,6 +102,12 @@ public:
 
     bool is_visible() const { return visible_.load(std::memory_order_relaxed); }
     bool is_submenu_open() const { return submenu_open_.load(std::memory_order_relaxed); }
+    bool is_dropdown_open() const { return dropdown_open_.load(std::memory_order_relaxed); }
+    void close_dropdown();
+    bool is_name_entry() const { return name_entry_.load(std::memory_order_relaxed); }
+    void cancel_name_entry();
+    // opener() opens the touch keyboard (the user closes it themselves).
+    void set_keyboard_opener(std::function<void()> opener) { open_kbd_ = std::move(opener); }
     void update_tiles(const config::Profile& profile);
 
 private:
@@ -150,6 +167,22 @@ private:
     void apply_sub_param(int param_idx);
     void cycle_sub_button(int param_idx);
 
+    // Profile bar
+    void navigate_dropdown(int dx, int dy);
+    void select_dropdown();
+    void activate_profile_item(int item);   // 0=open dropdown, 1=New, 2=Delete
+    void refresh_profiles();
+    void apply_active_profile();            // apply config's active profile to mapper + refresh UI
+    void draw_profile_bar(float y);
+
+    // Profile name entry (New)
+    void begin_name_entry();
+    void end_name_entry(bool commit);
+    void name_append(wchar_t c);
+    void name_backspace();
+    void draw_name_entry(float y);
+    static LRESULT CALLBACK kbd_hook_proc(int code, WPARAM wp, LPARAM lp);
+
     // Remap helpers
     void cycle_remap_at_cursor(int direction);
     config::ButtonId button_id_for_cursor(int cursor) const;
@@ -177,6 +210,19 @@ private:
     std::vector<ParamData> sub_params_;
     std::vector<std::wstring> sub_descs_;
 
+    // Profile bar state (guarded by tiles_mtx_ for the vectors/cursors)
+    std::atomic<bool> dropdown_open_{false};
+    std::atomic<bool> default_active_{true};  // Default is immutable -> tiles read-only
+    int dd_cursor_ = 0;
+    int dd_active_ = 0;
+    std::vector<std::wstring> dd_names_;
+
+    // Profile name entry (New)
+    std::atomic<bool> name_entry_{false};
+    std::wstring name_text_;                // guarded by tiles_mtx_
+    std::function<void()> open_kbd_;        // opens the Windows touch keyboard
+    HHOOK kbd_hook_ = nullptr;              // low-level keyboard hook (overlay thread)
+
     windeck::config::Config&         config_;
     windeck::mapper::Mapper&         mapper_;
     windeck::output::SyntheticInput& synth_;
@@ -190,6 +236,7 @@ private:
     ID2D1SolidColorBrush* br_slider_bg_ = nullptr;
     ID2D1SolidColorBrush* br_dim_text_  = nullptr;
     ID2D1SolidColorBrush* br_dim_overlay_ = nullptr;  // submenu dim
+    ID2D1SolidColorBrush* br_danger_ = nullptr;       // Delete button text
 };
 
 } // namespace windeck::overlay
