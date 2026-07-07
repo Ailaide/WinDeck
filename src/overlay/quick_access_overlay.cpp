@@ -295,14 +295,10 @@ QuickAccessOverlay::~QuickAccessOverlay() {
 
 void QuickAccessOverlay::show() {
     visible_.store(true, std::memory_order_relaxed);
-    cursor_.store(kZoneMain, std::memory_order_relaxed); // start on first main tile
+    cursor_.store(kZoneProfiles, std::memory_order_relaxed); // start on the profiles dropdown
     submenu_open_.store(false, std::memory_order_relaxed);
     dropdown_open_.store(false, std::memory_order_relaxed);
     refresh_profiles();
-    // On the immutable Default the tiles are read-only, so start the cursor on
-    // the profile bar where the user can switch or create a profile.
-    if (default_active_.load(std::memory_order_relaxed))
-        cursor_.store(kZoneProfiles, std::memory_order_relaxed);
     post_show();
 }
 

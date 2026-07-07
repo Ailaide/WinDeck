@@ -17,7 +17,7 @@ struct OverlayColors {
     static constexpr D2D1_COLOR_F kActive = {0.902f, 0.600f, 0.098f, 1.0f}; // orange
     static constexpr D2D1_COLOR_F kCenter = {0.078f, 0.078f, 0.078f, 1.0f}; // near-black
     static constexpr D2D1_COLOR_F kText   = {1.000f, 1.000f, 1.000f, 1.0f}; // white
-    static constexpr BYTE kGlobalAlpha = 235;
+    static constexpr BYTE kGlobalAlpha = 245;  // ~96% opaque (was 235 / ~92%)
     static constexpr COLORREF kColorKey = RGB(0, 0, 0);
 };
 
