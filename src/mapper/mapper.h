@@ -35,7 +35,7 @@ public:
                   windeck::output::SyntheticInput& synth);
 
     // Map + tick inertia + flush synth, all under one lock.
-    // Prevents race with apply_profile on console thread.
+    // Prevents race with apply_profile on tray/overlay thread.
     MapResult map_and_flush(const neptune::InputReport& input,
                             windeck::output::SyntheticInput& synth);
 

@@ -37,8 +37,11 @@ USHORT ButtonMapper::map(uint32_t nb, uint32_t nb_ext,
     USHORT xb = 0;
 
     // --- System buttons: intercept, do NOT pass to Xbox ---
-    uint32_t rising_btn = nb & ~prev_buttons_;
-    uint32_t rising_ext = nb_ext & ~prev_buttons_ext_;
+    // On first frame, suppress rising edges to avoid false triggers
+    // (prev_buttons_ is 0, so any held button looks like a new press)
+    uint32_t rising_btn = first_frame_ ? 0u : (nb & ~prev_buttons_);
+    uint32_t rising_ext = first_frame_ ? 0u : (nb_ext & ~prev_buttons_ext_);
+    first_frame_ = false;
     prev_buttons_ = nb;
     prev_buttons_ext_ = nb_ext;
 

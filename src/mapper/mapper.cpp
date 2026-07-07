@@ -107,7 +107,7 @@ void Mapper::tick_and_flush(windeck::output::SyntheticInput& synth) {
 }
 
 void Mapper::release_all(windeck::output::SyntheticInput& synth) {
-    std::shared_lock lock(mutex_);
+    std::unique_lock lock(mutex_);
     release_all_unlocked(synth);
 }
 

@@ -41,7 +41,6 @@ add_executable(windeck
     src/overlay/overlay_base.cpp
     src/overlay/radial_overlay.cpp
     src/overlay/quick_access_overlay.cpp
-    src/console/console_commands.cpp
 )
 
 target_include_directories(windeck PRIVATE src)

@@ -33,7 +33,8 @@ private:
     std::array<config::ButtonAction, static_cast<size_t>(config::ButtonId::Count)> actions_;
     bool configured_ = false;
 
-    // Edge detection
+    // Edge detection (first_frame_ suppresses false rising edges on startup)
+    bool first_frame_ = true;
     uint32_t prev_buttons_ = 0;
     uint32_t prev_buttons_ext_ = 0;
 

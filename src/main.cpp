@@ -20,14 +20,11 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <atomic>
 #include <csignal>
-#include "console/console_commands.h"
-#include <iostream>
 #include <thread>
 #include <chrono>
 #include <filesystem>
 
 static std::atomic<bool> g_running{true};
-static std::atomic<bool> g_emergency_restore{false};
 static windeck::neptune::NeptuneDevice* g_neptune = nullptr;
 
 static void signal_handler(int /*sig*/) {
@@ -38,17 +35,20 @@ static BOOL WINAPI console_handler(DWORD event) {
     switch (event) {
         case CTRL_C_EVENT:
         case CTRL_BREAK_EVENT:
+            // Request shutdown. The input thread owns the HID device and always
+            // restores lizard mode when it exits (see input_loop), so no
+            // separate restore flag is needed on any termination path.
             g_running.store(false, std::memory_order_relaxed);
             Sleep(3000);
             return TRUE;
         case CTRL_CLOSE_EVENT:
         case CTRL_LOGOFF_EVENT:
         case CTRL_SHUTDOWN_EVENT:
-            // Signal emergency restore. The input loop checks this flag
-            // and performs the restore from its own thread (safe).
-            g_emergency_restore.store(true, std::memory_order_relaxed);
+            // The OS terminates the process shortly after this handler returns,
+            // so hold here long enough for the input thread to exit its loop and
+            // restore lizard mode before we return.
             g_running.store(false, std::memory_order_relaxed);
-            Sleep(5000); // Give input thread time to restore
+            Sleep(5000);
             return TRUE;
     }
     return FALSE;
@@ -191,6 +191,12 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
 
     // Local edge detection for QAM navigation (separate from ButtonMapper)
     uint32_t prev_nav_btn = 0;
+    bool prev_qam_open = false;
+
+    // Owned (not detached) background saver for profile auto-save on QAM close.
+    // Joined before this function returns — which happens before main() destroys
+    // `config` — so the saver can never outlive the object it writes.
+    std::thread save_thread;
 
     spdlog::info("Input loop started");
 
@@ -201,6 +207,14 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
             error_count = 0;
 
             bool qam_open = qam.is_visible();
+
+            // Auto-save profile when QAM closes (off input thread to avoid I/O stall).
+            // Join any prior save first so saves never overlap on the same temp file.
+            if (prev_qam_open && !qam_open) {
+                if (save_thread.joinable()) save_thread.join();
+                save_thread = std::thread([&config]() { config.save_profile(); });
+            }
+            prev_qam_open = qam_open;
 
             if (qam_open) {
                 // Quick Access Menu is open — intercept D-pad/A/B/Steam for navigation,
@@ -227,7 +241,7 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                 xbox.update(zero);
 
             } else {
-                // Normal input path (map+tick+flush under one lock to prevent race with console thread)
+                // Normal input path (map+tick+flush under one lock)
                 auto result = mapper.map_and_flush(input, synth);
                 xbox.update(result.xbox_report);
 
@@ -296,15 +310,21 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
         }
     }
 
+    // Finish any in-flight profile save before returning so the background saver
+    // never outlives `config` (owned by main, destroyed only after this thread joins).
+    if (save_thread.joinable()) save_thread.join();
+
     mapper.release_all(synth);
     synth.release_all();
 
-    // Emergency restore: if console is closing, restore lizard mode from this thread
-    if (g_emergency_restore.load(std::memory_order_relaxed)) {
-        device.enable_lizard_mode();
-        spdlog::info("Emergency lizard mode restore completed");
-        spdlog::default_logger()->flush();
-    }
+    // The input thread owns the HID device, so it always restores lizard mode when
+    // it stops — on every shutdown path (Ctrl+C, window close, logoff, shutdown,
+    // normal quit). Doing it here guarantees the restore runs before the process is
+    // torn down and keeps all HID I/O on the owning thread. main() also calls
+    // neptune.close() afterwards, whose restore is idempotent (safety net).
+    device.enable_lizard_mode();
+    spdlog::info("Lizard mode restored on input-thread exit");
+    spdlog::default_logger()->flush();
 
     spdlog::info("Input loop stopped");
 }
@@ -405,18 +425,7 @@ int main() {
                               std::ref(qam),
                               std::ref(config));
 
-    spdlog::info("WinDeck running. Type 'help' for commands, Ctrl+C to stop.");
-
-    windeck::console::ConsoleCommands console_commands(config, mapper, synth);
-
-    // Console reader thread. To remove: delete this block, the #include, and CMakeLists entry.
-    std::thread console_thread([&]() {
-        std::string line;
-        while (g_running.load(std::memory_order_relaxed)) {
-            if (!std::getline(std::cin, line)) break;
-            if (!line.empty()) console_commands.process(line);
-        }
-    });
+    spdlog::info("WinDeck running. Press Ctrl+C to stop.");
 
     // Main thread: wait for shutdown
     while (g_running.load(std::memory_order_relaxed)) {
@@ -426,7 +435,6 @@ int main() {
     spdlog::info("Shutting down...");
     spdlog::default_logger()->flush();
 
-    console_thread.detach(); // Blocked on getline — let it die with process
     input_thread.join();
     xbox.disconnect();
     g_neptune = nullptr;

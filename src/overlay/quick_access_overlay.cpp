@@ -358,8 +358,8 @@ void QuickAccessOverlay::activate() {
             case RPad:   profile.right_touchpad.mode = next_touchpad_mode(profile.right_touchpad.mode); break;
         }
         config_.set_profile(profile);
-        mapper_.apply_profile(profile, synth_);
         update_tiles(profile);
+        mapper_.apply_profile(profile, synth_);
         return;
     }
 
@@ -886,12 +886,18 @@ void QuickAccessOverlay::on_show(WPARAM wp) {
 }
 
 void QuickAccessOverlay::reposition() {
+    // Always open at the base (no-submenu) width. If the menu was previously closed
+    // while a submenu was open, hide() left the window and the D2D render target at the
+    // wider submenu size; reset both here (matching the WM_OVR_RESIZE handler) so the
+    // window size and render target stay in sync and proportions are correct on reopen.
+    set_size(kTotalW, kTotalH);
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
     int x = (sw - kTotalW) / 2;
     int y = (sh - kTotalH) / 2;
     SetWindowPos(hwnd(), HWND_TOPMOST, x, y, kTotalW, kTotalH,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (rt_) rt_->Resize(D2D1::SizeU(kTotalW, kTotalH));
 }
 
 // --- D2D Resources ---

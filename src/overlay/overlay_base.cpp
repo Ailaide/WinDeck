@@ -103,6 +103,7 @@ void OverlayBase::thread_main() {
     }
 
     release_resources();
+    UnregisterClassW(class_name_, GetModuleHandleW(nullptr));
     if (dwrite_)  { dwrite_->Release();  dwrite_  = nullptr; }
     if (factory_) { factory_->Release(); factory_ = nullptr; }
     CoUninitialize();

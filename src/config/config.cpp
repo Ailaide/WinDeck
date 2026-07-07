@@ -336,7 +336,11 @@ Config::Config() {
 }
 
 void Config::ensure_dirs() const {
-    std::filesystem::create_directories(config_dir_ / "profiles");
+    std::error_code ec;
+    std::filesystem::create_directories(config_dir_ / "profiles", ec);
+    if (ec) {
+        spdlog::warn("Failed to create profiles directory: {}", ec.message());
+    }
 }
 
 std::filesystem::path Config::profile_path(const std::string& name) const {
@@ -377,12 +381,23 @@ bool Config::save_profile() const {
 
     try {
         ensure_dirs();
-        std::ofstream file(path);
-        if (!file.is_open()) {
-            spdlog::error("Cannot write profile to {}", path.string());
+        auto tmp_path = path;
+        tmp_path += L".tmp";
+        {
+            std::ofstream file(tmp_path);
+            if (!file.is_open()) {
+                spdlog::error("Cannot write profile to {}", tmp_path.string());
+                return false;
+            }
+            file << profile_to_json(copy);
+        }
+        std::error_code ec;
+        std::filesystem::rename(tmp_path, path, ec);
+        if (ec) {
+            spdlog::error("Cannot rename temp profile: {}", ec.message());
+            std::filesystem::remove(tmp_path, ec);
             return false;
         }
-        file << profile_to_json(copy);
         spdlog::info("Profile '{}' saved", copy.name);
         return true;
     } catch (const std::exception& e) {
