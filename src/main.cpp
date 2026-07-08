@@ -232,10 +232,12 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                 if (rising & btn::kDpadRight) qam.navigate(1, 0);
                 if (rising & btn::kA)         qam.activate();
                 if (rising & btn::kX)         qam.press_x();
+                if (rising & btn::kY)         qam.press_y();
                 if (rising & btn::kLShoulder) qam.cycle_category(-1);
                 if (rising & btn::kRShoulder) qam.cycle_category(1);
                 if (rising & btn::kB) {
                     if (qam.is_name_entry()) qam.cancel_name_entry();
+                    else if (qam.is_picker_open()) qam.close_picker();
                     else if (qam.is_submenu_open()) qam.hide_submenu();
                     else if (qam.is_dropdown_open()) qam.close_dropdown();
                     else qam.hide();

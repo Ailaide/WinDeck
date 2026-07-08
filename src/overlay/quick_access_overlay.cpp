@@ -226,6 +226,57 @@ static std::wstring fmt_float(float v, int decimals) {
     return buf;
 }
 
+// Friendly name for a keyboard VK code (covers every key the picker can bind).
+static std::wstring keyboard_key_label(uint16_t vk) {
+    wchar_t buf[16];
+    if (vk >= '0' && vk <= '9') { swprintf(buf, 16, L"%c", static_cast<char>(vk)); return buf; }
+    if (vk >= 'A' && vk <= 'Z') { swprintf(buf, 16, L"%c", static_cast<char>(vk)); return buf; }
+    if (vk >= VK_F1 && vk <= VK_F12) { swprintf(buf, 16, L"F%d", vk - VK_F1 + 1); return buf; }
+    switch (vk) {
+        case VK_SPACE:      return L"Space";
+        case VK_RETURN:     return L"Enter";
+        case VK_ESCAPE:     return L"Esc";
+        case VK_TAB:        return L"Tab";
+        case VK_BACK:       return L"Backspace";
+        case VK_CAPITAL:    return L"Caps";
+        case VK_LSHIFT:     return L"L-Shift";
+        case VK_RSHIFT:     return L"R-Shift";
+        case VK_LCONTROL:   return L"L-Ctrl";
+        case VK_RCONTROL:   return L"R-Ctrl";
+        case VK_LMENU:      return L"L-Alt";
+        case VK_RMENU:      return L"R-Alt";
+        case VK_LWIN:       return L"L-Win";
+        case VK_RWIN:       return L"R-Win";
+        case VK_APPS:       return L"Menu";
+        case VK_SNAPSHOT:   return L"PrtSc";
+        case VK_SCROLL:     return L"ScrLk";
+        case VK_PAUSE:      return L"Pause";
+        case VK_INSERT:     return L"Insert";
+        case VK_DELETE:     return L"Delete";
+        case VK_HOME:       return L"Home";
+        case VK_END:        return L"End";
+        case VK_PRIOR:      return L"PgUp";
+        case VK_NEXT:       return L"PgDn";
+        case VK_UP:         return L"Up";
+        case VK_DOWN:       return L"Down";
+        case VK_LEFT:       return L"Left";
+        case VK_RIGHT:      return L"Right";
+        case VK_OEM_1:      return L";";
+        case VK_OEM_PLUS:   return L"=";
+        case VK_OEM_COMMA:  return L",";
+        case VK_OEM_MINUS:  return L"-";
+        case VK_OEM_PERIOD: return L".";
+        case VK_OEM_2:      return L"/";
+        case VK_OEM_3:      return L"`";
+        case VK_OEM_4:      return L"[";
+        case VK_OEM_5:      return L"\\";
+        case VK_OEM_6:      return L"]";
+        case VK_OEM_7:      return L"'";
+    }
+    swprintf(buf, 16, L"0x%X", vk);
+    return buf;
+}
+
 // --- Action display ---
 
 std::wstring QuickAccessOverlay::action_display(const config::ButtonAction& a) const {
@@ -243,18 +294,8 @@ std::wstring QuickAccessOverlay::action_display(const config::ButtonAction& a) c
             if (a.code == 0x0080) return L"Xbox RS";
             return L"Xbox ?";
         }
-        case config::ActionType::Keyboard: {
-            wchar_t buf[16];
-            if (a.code >= '0' && a.code <= '9') { swprintf(buf, 16, L"Key %c", (char)a.code); return buf; }
-            if (a.code >= 'A' && a.code <= 'Z') { swprintf(buf, 16, L"Key %c", (char)a.code); return buf; }
-            if (a.code >= 0x70 && a.code <= 0x7B) { swprintf(buf, 16, L"Key F%d", a.code - 0x6F); return buf; }
-            if (a.code == 0x20) return L"Key Space";
-            if (a.code == 0x0D) return L"Key Enter";
-            if (a.code == 0x1B) return L"Key Esc";
-            if (a.code == 0x09) return L"Key Tab";
-            swprintf(buf, 16, L"Key 0x%X", a.code);
-            return buf;
-        }
+        case config::ActionType::Keyboard:
+            return keyboard_key_label(a.code);
         case config::ActionType::MouseButton: {
             if (a.code == 0) return L"Mouse L";
             if (a.code == 1) return L"Mouse R";
@@ -269,6 +310,32 @@ std::wstring QuickAccessOverlay::action_display(const config::ButtonAction& a) c
     return L"?";
 }
 
+// --- Remap picker: static data ---
+
+static constexpr float kPickerTabH = 40.0f;
+static const wchar_t* kPickerTabLabels[3] = { L"Mouse", L"Keyboard", L"XBOX Controller" };
+
+// Display name of a remappable button, for the picker description line.
+static const wchar_t* button_id_name(config::ButtonId id) {
+    switch (id) {
+        case config::ButtonId::A:       return L"A";
+        case config::ButtonId::B:       return L"B";
+        case config::ButtonId::X:       return L"X";
+        case config::ButtonId::Y:       return L"Y";
+        case config::ButtonId::LB:      return L"LB";
+        case config::ButtonId::RB:      return L"RB";
+        case config::ButtonId::Start:   return L"Start";
+        case config::ButtonId::Back:    return L"Back";
+        case config::ButtonId::LSClick: return L"LS Click";
+        case config::ButtonId::RSClick: return L"RS Click";
+        case config::ButtonId::L4:      return L"L4";
+        case config::ButtonId::L5:      return L"L5";
+        case config::ButtonId::R4:      return L"R4";
+        case config::ButtonId::R5:      return L"R5";
+        default:                        return L"the button";
+    }
+}
+
 // --- QuickAccessOverlay implementation ---
 
 QuickAccessOverlay::QuickAccessOverlay(windeck::config::Config& config,
@@ -280,6 +347,8 @@ QuickAccessOverlay::QuickAccessOverlay(windeck::config::Config& config,
         tiles_[i].label = kMainTileLabels[i];
 
     for (auto& s : remap_display_) s = L"None";
+
+    build_picker_targets();
 
     start();
 }
@@ -298,6 +367,7 @@ void QuickAccessOverlay::show() {
     cursor_.store(kZoneProfiles, std::memory_order_relaxed); // start on the profiles dropdown
     submenu_open_.store(false, std::memory_order_relaxed);
     dropdown_open_.store(false, std::memory_order_relaxed);
+    picker_open_.store(false, std::memory_order_relaxed);
     refresh_profiles();
     post_show();
 }
@@ -307,6 +377,7 @@ void QuickAccessOverlay::hide() {
     visible_.store(false, std::memory_order_relaxed);
     submenu_open_.store(false, std::memory_order_relaxed);
     dropdown_open_.store(false, std::memory_order_relaxed);
+    picker_open_.store(false, std::memory_order_relaxed);
     post_hide();
 }
 
@@ -314,6 +385,7 @@ void QuickAccessOverlay::hide() {
 
 void QuickAccessOverlay::navigate(int dx, int dy) {
     if (name_entry_.load(std::memory_order_relaxed)) return;
+    if (picker_open_.load(std::memory_order_relaxed)) { picker_navigate(dx, dy); return; }
     if (dropdown_open_.load(std::memory_order_relaxed)) {
         navigate_dropdown(dx, dy);
         return;
@@ -368,6 +440,7 @@ void QuickAccessOverlay::navigate_main(int dx, int dy) {
 }
 
 void QuickAccessOverlay::activate() {
+    if (picker_open_.load(std::memory_order_relaxed)) { picker_bind_current(); return; }
     if (name_entry_.load(std::memory_order_relaxed)) {
         end_name_entry(true);
         return;
@@ -410,11 +483,12 @@ void QuickAccessOverlay::activate() {
         return;
     }
 
-    // Remap tiles: cycle forward within category
-    cycle_remap_at_cursor(1);
+    // Remap tiles: open the remap picker to choose a new binding.
+    open_picker();
 }
 
 void QuickAccessOverlay::press_x() {
+    if (picker_open_.load(std::memory_order_relaxed)) return;
     if (name_entry_.load(std::memory_order_relaxed)) return;
     if (dropdown_open_.load(std::memory_order_relaxed)) return;
     if (submenu_open_.load(std::memory_order_relaxed)) {
@@ -472,8 +546,7 @@ void QuickAccessOverlay::press_x() {
         return;
     }
 
-    // Remap tiles: cycle backward within category
-    cycle_remap_at_cursor(-1);
+    // Remap tiles: X is unused (the binding is chosen in the picker via A).
 }
 
 void QuickAccessOverlay::hide_submenu() {
@@ -483,6 +556,7 @@ void QuickAccessOverlay::hide_submenu() {
 void QuickAccessOverlay::cycle_category(int direction) {
     if (name_entry_.load(std::memory_order_relaxed)) return;
     if (dropdown_open_.load(std::memory_order_relaxed)) return;
+    if (picker_open_.load(std::memory_order_relaxed)) { picker_switch_tab(direction); return; }
 
     // Handle radial remap in submenu
     if (submenu_open_.load(std::memory_order_relaxed)) {
@@ -512,30 +586,7 @@ void QuickAccessOverlay::cycle_category(int direction) {
         return;
     }
 
-    // Default profile is immutable — remapping is read-only.
-    if (default_active_.load(std::memory_order_relaxed)) return;
-
-    int cur = cursor_.load(std::memory_order_relaxed);
-    auto bid = button_id_for_cursor(cur);
-    if (bid == config::ButtonId::Count) return;
-
-    auto profile = config_.get_profile();
-    auto& action = profile.buttons[static_cast<int>(bid)];
-
-    // Find current category index
-    int cat_idx = 0;
-    for (int i = 0; i < kNumCategories; i++) {
-        if (kCategoryOrder[i] == action.type) { cat_idx = i; break; }
-    }
-    cat_idx = (cat_idx + direction + kNumCategories) % kNumCategories;
-
-    action.type = kCategoryOrder[cat_idx];
-    action.code = first_code_for_type(action.type);
-
-    config_.set_profile(profile);
-    mapper_.apply_profile(profile, synth_);
-    refresh_all(profile);
-    invalidate();
+    // Button remapping now uses the picker (opened with A); LB/RB do nothing on the grid.
 }
 
 // --- Remap helpers ---
@@ -554,49 +605,6 @@ config::ButtonId QuickAccessOverlay::button_id_for_cursor(int cursor) const {
     if (remap_idx >= 0 && remap_idx < static_cast<int>(std::size(kRemapButtonIds)))
         return kRemapButtonIds[remap_idx];
     return config::ButtonId::Count;
-}
-
-void QuickAccessOverlay::cycle_remap_at_cursor(int direction) {
-    int cur = cursor_.load(std::memory_order_relaxed);
-    auto bid = button_id_for_cursor(cur);
-    if (bid == config::ButtonId::Count) return;
-
-    auto profile = config_.get_profile();
-    auto& action = profile.buttons[static_cast<int>(bid)];
-
-    if (action.type == config::ActionType::None) return; // None: A/X ignored
-
-    switch (action.type) {
-        case config::ActionType::Keyboard: {
-            int idx = find_in_array(kKeyCodes, kNumKeys, action.code);
-            idx = (idx + direction + kNumKeys) % kNumKeys;
-            action.code = kKeyCodes[idx];
-            break;
-        }
-        case config::ActionType::XboxButton: {
-            int idx = find_in_array(kXboxCodes, kNumXbox, action.code);
-            idx = (idx + direction + kNumXbox) % kNumXbox;
-            action.code = kXboxCodes[idx];
-            break;
-        }
-        case config::ActionType::MouseButton: {
-            int idx = find_in_array(kMouseCodes, kNumMouse, action.code);
-            idx = (idx + direction + kNumMouse) % kNumMouse;
-            action.code = kMouseCodes[idx];
-            break;
-        }
-        case config::ActionType::MouseScroll: {
-            // Toggle between scroll up (1) and scroll down (0)
-            action.code = (action.code == 1) ? 0 : 1;
-            break;
-        }
-        default: return;
-    }
-
-    config_.set_profile(profile);
-    mapper_.apply_profile(profile, synth_);
-    refresh_all(profile);
-    invalidate();
 }
 
 // --- Submenu ---
@@ -1239,13 +1247,19 @@ HRESULT QuickAccessOverlay::create_child_resources() {
     mini_fmt_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     mini_fmt_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
+    // Keyboard key labels (11pt bold, centered)
+    hr = dwrite_->CreateTextFormat(L"Segoe UI", nullptr,
+        DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        11.0f, L"en-US", &key_fmt_);
+    if (FAILED(hr)) return hr;
+    key_fmt_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    key_fmt_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
     hr = rt_->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.10f, 0.10f), &br_slider_bg_);
     if (FAILED(hr)) return hr;
     hr = rt_->CreateSolidColorBrush(D2D1::ColorF(0.55f, 0.55f, 0.55f, 1.0f), &br_dim_text_);
     if (FAILED(hr)) return hr;
     hr = rt_->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &br_dim_overlay_);
-    if (FAILED(hr)) return hr;
-    hr = rt_->CreateSolidColorBrush(D2D1::ColorF(0.86f, 0.32f, 0.28f), &br_danger_);
     if (FAILED(hr)) return hr;
 
     return S_OK;
@@ -1258,10 +1272,10 @@ void QuickAccessOverlay::release_child_resources() {
     rel(action_fmt_);
     rel(desc_fmt_);
     rel(mini_fmt_);
+    rel(key_fmt_);
     rel(br_slider_bg_);
     rel(br_dim_text_);
     rel(br_dim_overlay_);
-    rel(br_danger_);
 }
 
 // --- Drawing ---
@@ -1291,6 +1305,9 @@ void QuickAccessOverlay::on_paint() {
     bg.radiusY = 6.0f;
     rt_->FillRoundedRectangle(bg, br_center_);
 
+    if (picker_open_.load(std::memory_order_relaxed)) {
+        draw_picker();
+    } else {
     float y = my + static_cast<float>(kPad);
     float x = static_cast<float>(kPad);
 
@@ -1322,16 +1339,17 @@ void QuickAccessOverlay::on_paint() {
             tile.radiusX = 6.0f; tile.radiusY = 6.0f;
             bool selected = (kZoneMain + i == cur);
             rt_->FillRoundedRectangle(tile, selected ? br_hover_ : br_sector_);
-            draw_icon(i, tx, ty);
+            ID2D1SolidColorBrush* tile_br = selected ? br_active_ : br_text_;
+            draw_icon(i, tx, ty, tile_br);
 
             constexpr float kIconZoneW = 80.0f;
             D2D1_RECT_F lr = D2D1::RectF(tx + kIconZoneW, ty + 10, tx + kTileW - 12, ty + 36);
             rt_->DrawText(tiles_[i].label.c_str(), static_cast<UINT32>(tiles_[i].label.size()),
-                          label_fmt_, lr, br_text_,
+                          label_fmt_, lr, tile_br,
                           D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
             D2D1_RECT_F mr = D2D1::RectF(tx + kIconZoneW, ty + 38, tx + kTileW - 12, ty + kTileH - 8);
             rt_->DrawText(tiles_[i].mode_text.c_str(), static_cast<UINT32>(tiles_[i].mode_text.size()),
-                          mode_fmt_, mr, br_text_,
+                          mode_fmt_, mr, tile_br,
                           D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
         }
         y += kRows * kTileH + (kRows - 1) * kGap + kGap;
@@ -1377,6 +1395,7 @@ void QuickAccessOverlay::on_paint() {
         if (submenu_open_.load(std::memory_order_relaxed))
             draw_submenu();
     } // lock released
+    }
 
     // Description (below menu panel)
     draw_description();
@@ -1389,8 +1408,8 @@ void QuickAccessOverlay::on_paint() {
     ValidateRect(hwnd(), nullptr);
 }
 
-void QuickAccessOverlay::draw_icon(int index, float x, float y) {
-    if (!rt_ || !br_text_) return;
+void QuickAccessOverlay::draw_icon(int index, float x, float y, ID2D1SolidColorBrush* brush) {
+    if (!rt_ || !brush) return;
     constexpr float kIconZoneW = 80.0f;
     float cx = x + kIconZoneW / 2.0f;
     float cy = y + kTileH / 2.0f;
@@ -1398,15 +1417,15 @@ void QuickAccessOverlay::draw_icon(int index, float x, float y) {
     switch (static_cast<MainTileId>(index)) {
         case DPad: {
             float a = 7.0f, L = 24.0f;
-            rt_->FillRectangle(D2D1::RectF(cx - a, cy - L, cx + a, cy + L), br_text_);
-            rt_->FillRectangle(D2D1::RectF(cx - L, cy - a, cx + L, cy + a), br_text_);
+            rt_->FillRectangle(D2D1::RectF(cx - a, cy - L, cx + a, cy + L), brush);
+            rt_->FillRectangle(D2D1::RectF(cx - L, cy - a, cx + L, cy + a), brush);
             break;
         }
         case LStick:
         case RStick: {
             float r = 24.0f;
-            rt_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), br_text_, 2.5f);
-            rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 6.0f, 6.0f), br_text_);
+            rt_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), brush, 2.5f);
+            rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 6.0f, 6.0f), brush);
             break;
         }
         case LPad:
@@ -1414,7 +1433,7 @@ void QuickAccessOverlay::draw_icon(int index, float x, float y) {
             D2D1_ROUNDED_RECT rr;
             rr.rect = D2D1::RectF(cx - 30, cy - 21, cx + 30, cy + 21);
             rr.radiusX = 6.0f; rr.radiusY = 6.0f;
-            rt_->DrawRoundedRectangle(rr, br_text_, 2.5f);
+            rt_->DrawRoundedRectangle(rr, brush, 2.5f);
             break;
         }
         case Gyro: {
@@ -1436,7 +1455,7 @@ void QuickAccessOverlay::draw_icon(int index, float x, float y) {
                         sink->EndFigure(D2D1_FIGURE_END_OPEN);
                         sink->Close();
                         sink->Release();
-                        rt_->DrawGeometry(geom, br_text_, 2.5f);
+                        rt_->DrawGeometry(geom, brush, 2.5f);
                     }
                     geom->Release();
                 }
@@ -1462,7 +1481,7 @@ void QuickAccessOverlay::draw_small_tile(float x, float y, float w,
                   D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
     D2D1_RECT_F vr = D2D1::RectF(x + w * 0.4f, y, x + w - 8, y + kSmallTileH);
     rt_->DrawText(value.c_str(), static_cast<UINT32>(value.size()),
-                  mini_fmt_, vr, br_text_,
+                  mini_fmt_, vr, selected ? br_active_ : br_text_,
                   D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
 }
 
@@ -1483,7 +1502,7 @@ void QuickAccessOverlay::draw_mini_tile(float x, float y, float w,
     // Value (right)
     D2D1_RECT_F vr = D2D1::RectF(x + w * 0.4f, y, x + w - 8, y + kMiniTileH);
     rt_->DrawText(value.c_str(), static_cast<UINT32>(value.size()),
-                  mini_fmt_, vr, br_text_,
+                  mini_fmt_, vr, selected ? br_active_ : br_text_,
                   D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
 }
 
@@ -1544,6 +1563,13 @@ void QuickAccessOverlay::draw_action_bar() {
         draw_text_hint(arrows, 30); draw_text_hint(L"Select", 60);
         draw_glyph(L'A'); draw_text_hint(L"Switch", 70);
         draw_glyph(L'B'); draw_text_hint(L"Cancel", 70);
+        return;
+    }
+    if (picker_open_.load(std::memory_order_relaxed)) {
+        draw_pill(L"LB", 2); draw_pill(L"RB", 2); draw_text_hint(L"Device", 70);
+        draw_glyph(L'A'); draw_text_hint(L"Bind", 50);
+        draw_glyph(L'Y'); draw_text_hint(L"None", 50);
+        draw_glyph(L'B'); draw_text_hint(L"Back", 50);
         return;
     }
     if (!is_submenu && default_active_.load(std::memory_order_relaxed) && cur < kZoneProfiles) {
@@ -1615,20 +1641,8 @@ void QuickAccessOverlay::draw_action_bar() {
         draw_glyph(L'B'); draw_text_hint(L"Close", 60);
 
     } else {
-        // Remap tiles
-        draw_pill(L"LB", 2); draw_pill(L"RB", 2); draw_text_hint(L"Category", 90);
-
-        // Check if None category — skip A/X
-        auto bid = button_id_for_cursor(cur);
-        bool is_none = false;
-        if (bid != config::ButtonId::Count) {
-            auto profile = config_.get_profile();
-            is_none = (profile.buttons[static_cast<int>(bid)].type == config::ActionType::None);
-        }
-        if (!is_none) {
-            draw_glyph(L'A'); draw_text_hint(L"Next", 50);
-            draw_glyph(L'X'); draw_text_hint(L"Prev", 50);
-        }
+        // Remap tiles: A opens the picker.
+        draw_glyph(L'A'); draw_text_hint(L"Remap", 70);
         draw_glyph(L'B'); draw_text_hint(L"Close", 60);
     }
 }
@@ -1639,7 +1653,12 @@ void QuickAccessOverlay::draw_description() {
     std::wstring desc;
     bool is_submenu = submenu_open_.load(std::memory_order_relaxed);
 
-    if (is_submenu) {
+    if (picker_open_.load(std::memory_order_relaxed)) {
+        int bidv = picker_bid_.load(std::memory_order_relaxed);
+        desc = L"Choose what ";
+        desc += (bidv >= 0) ? button_id_name(static_cast<config::ButtonId>(bidv)) : L"the button";
+        desc += L" sends.   LB / RB switch device   -   A binds   -   Y clears   -   B cancels.";
+    } else if (is_submenu) {
         std::lock_guard lock(tiles_mtx_);
         if (sub_cursor_ >= 0 && sub_cursor_ < static_cast<int>(sub_descs_.size()))
             desc = sub_descs_[sub_cursor_];
@@ -1659,7 +1678,7 @@ void QuickAccessOverlay::draw_description() {
         } else if (cur >= kZoneMain && cur < kZoneMain + kTiles) {
             desc = kMainDescriptions[cur - kZoneMain];
         } else {
-            desc = L"Use LB/RB to switch category, A/X to cycle action.";
+            desc = L"Press A to choose a new binding for this button.";
         }
     }
 
@@ -1706,15 +1725,15 @@ void QuickAccessOverlay::draw_profile_bar(float y) {
     float new_x = del_x - btn_gap - btn_w;
     bool active_default = default_active_.load(std::memory_order_relaxed);
 
-    auto draw_button = [&](float bx, const wchar_t* text, bool focused,
-                           bool enabled, ID2D1SolidColorBrush* txt_brush) {
+    auto draw_button = [&](float bx, const wchar_t* text, bool focused, bool enabled) {
         D2D1_ROUNDED_RECT r;
         r.rect = D2D1::RectF(bx, top, bx + btn_w, top + h);
         r.radiusX = 6.0f; r.radiusY = 6.0f;
         rt_->FillRoundedRectangle(r, focused ? br_hover_ : br_sector_);
+        // White like the other tiles, orange when selected (matches submenu selection).
+        ID2D1SolidColorBrush* txt = !enabled ? br_dim_text_ : (focused ? br_active_ : br_text_);
         rt_->DrawText(text, static_cast<UINT32>(wcslen(text)), mini_fmt_, r.rect,
-                      enabled ? txt_brush : br_dim_text_,
-                      D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                      txt, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
     };
 
     // Dropdown box (fills the middle)
@@ -1731,7 +1750,7 @@ void QuickAccessOverlay::draw_profile_bar(float y) {
 
         D2D1_RECT_F tr = D2D1::RectF(dd_left + 12.0f, top, dd_right - 26.0f, top + h);
         rt_->DrawText(active_name.c_str(), static_cast<UINT32>(active_name.size()),
-                      action_fmt_, tr, br_text_,
+                      action_fmt_, tr, focused ? br_active_ : br_text_,
                       D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
 
         const wchar_t* chev = dropdown_open_.load(std::memory_order_relaxed) ? L"\u25B4" : L"\u25BE";
@@ -1740,8 +1759,8 @@ void QuickAccessOverlay::draw_profile_bar(float y) {
                       D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
     }
 
-    draw_button(new_x, L"New", cur == kZoneProfiles + 1, true, br_active_);
-    draw_button(del_x, L"Delete", cur == kZoneProfiles + 2, !active_default, br_danger_);
+    draw_button(new_x, L"New", cur == kZoneProfiles + 1, true);
+    draw_button(del_x, L"Delete", cur == kZoneProfiles + 2, !active_default);
 
     // Open dropdown list (downward over the tiles)
     if (dropdown_open_.load(std::memory_order_relaxed) && !dd_names_.empty()) {
@@ -1837,7 +1856,7 @@ void QuickAccessOverlay::draw_submenu() {
     float hy = my + kPad;
     D2D1_RECT_F hr = D2D1::RectF(hx, hy, sx + sw - kPad, hy + 30);
     rt_->DrawText(header.c_str(), static_cast<UINT32>(header.size()),
-                  mode_fmt_, hr, br_active_,
+                  mode_fmt_, hr, br_text_,
                   D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
 
     // Parameters list
@@ -1890,6 +1909,311 @@ void QuickAccessOverlay::draw_submenu() {
         }
 
         py += 42;
+    }
+}
+
+// --- Remap picker ---
+
+void QuickAccessOverlay::build_picker_targets() {
+    using config::ActionType;
+
+    const float u = 32.0f, gap = 4.0f, keyH = 32.0f, rowGap = 4.0f;
+    const float my = static_cast<float>(kActionBarH + kActionBarGap);   // top of menu panel
+    const float contentTop = my + static_cast<float>(kPad) + kPickerTabH + 16.0f;
+
+    // ---------- Tab 1: Keyboard (tenkeyless) ----------
+    struct K { const wchar_t* l; uint16_t vk; float w; };
+    const std::vector<std::vector<K>> main = {
+        {{L"Esc",VK_ESCAPE,1},{L"F1",VK_F1,1},{L"F2",VK_F2,1},{L"F3",VK_F3,1},{L"F4",VK_F4,1},
+         {L"F5",VK_F5,1},{L"F6",VK_F6,1},{L"F7",VK_F7,1},{L"F8",VK_F8,1},
+         {L"F9",VK_F9,1},{L"F10",VK_F10,1},{L"F11",VK_F11,1},{L"F12",VK_F12,1},
+         {L"PrtSc",VK_SNAPSHOT,1},{L"ScrLk",VK_SCROLL,1},{L"Pause",VK_PAUSE,1}},
+        {{L"`",VK_OEM_3,1},{L"1",'1',1},{L"2",'2',1},{L"3",'3',1},{L"4",'4',1},{L"5",'5',1},
+         {L"6",'6',1},{L"7",'7',1},{L"8",'8',1},{L"9",'9',1},{L"0",'0',1},
+         {L"-",VK_OEM_MINUS,1},{L"=",VK_OEM_PLUS,1},{L"Bksp",VK_BACK,2}},
+        {{L"Tab",VK_TAB,1.5f},{L"Q",'Q',1},{L"W",'W',1},{L"E",'E',1},{L"R",'R',1},{L"T",'T',1},
+         {L"Y",'Y',1},{L"U",'U',1},{L"I",'I',1},{L"O",'O',1},{L"P",'P',1},
+         {L"[",VK_OEM_4,1},{L"]",VK_OEM_6,1},{L"\\",VK_OEM_5,1.5f}},
+        {{L"Caps",VK_CAPITAL,1.75f},{L"A",'A',1},{L"S",'S',1},{L"D",'D',1},{L"F",'F',1},{L"G",'G',1},
+         {L"H",'H',1},{L"J",'J',1},{L"K",'K',1},{L"L",'L',1},{L";",VK_OEM_1,1},{L"'",VK_OEM_7,1},
+         {L"Enter",VK_RETURN,2.25f}},
+        {{L"Shift",VK_LSHIFT,2.25f},{L"Z",'Z',1},{L"X",'X',1},{L"C",'C',1},{L"V",'V',1},{L"B",'B',1},
+         {L"N",'N',1},{L"M",'M',1},{L",",VK_OEM_COMMA,1},{L".",VK_OEM_PERIOD,1},{L"/",VK_OEM_2,1},
+         {L"Shift",VK_RSHIFT,2.75f}},
+        {{L"Ctrl",VK_LCONTROL,1.25f},{L"Win",VK_LWIN,1.25f},{L"Alt",VK_LMENU,1.25f},
+         {L"Space",VK_SPACE,6.25f},{L"Alt",VK_RMENU,1.25f},{L"Win",VK_RWIN,1.25f},
+         {L"Menu",VK_APPS,1.25f},{L"Ctrl",VK_RCONTROL,1.25f}},
+    };
+
+    auto rowWidth = [&](const std::vector<K>& row) {
+        float w = 0;
+        for (const auto& k : row) w += k.w * u;
+        w += static_cast<float>(row.size() - 1) * gap;
+        return w;
+    };
+    float mainW = 0;
+    for (const auto& r : main) mainW = (std::max)(mainW, rowWidth(r));
+
+    const float navKeyW = 50.0f;
+    const float navBlockW = 3 * navKeyW + 2 * gap;
+    const float blockGap = 20.0f;
+    const float totalKbW = mainW + blockGap + navBlockW;
+    const float kbX = (static_cast<float>(kTotalW) - totalKbW) / 2.0f;
+    const float navX = kbX + mainW + blockGap;
+
+    std::vector<PickerTarget> kb;
+    for (size_t r = 0; r < main.size(); r++) {
+        float rx = kbX;
+        float ry = contentTop + static_cast<float>(r) * (keyH + rowGap);
+        for (const auto& k : main[r]) {
+            float kw = k.w * u;
+            PickerTarget t;
+            t.cx = rx + kw / 2.0f; t.cy = ry + keyH / 2.0f;
+            t.w = kw; t.h = keyH; t.label = k.l;
+            t.action = { ActionType::Keyboard, k.vk };
+            kb.push_back(std::move(t));
+            rx += kw + gap;
+        }
+    }
+    // Navigation editing cluster aligned to the first two keyboard rows
+    struct N { const wchar_t* l; uint16_t vk; };
+    const N navEdit[2][3] = {
+        {{L"Ins",VK_INSERT},{L"Home",VK_HOME},{L"PgUp",VK_PRIOR}},
+        {{L"Del",VK_DELETE},{L"End",VK_END},{L"PgDn",VK_NEXT}},
+    };
+    for (int r = 0; r < 2; r++) {
+        float ry = contentTop + static_cast<float>(r) * (keyH + rowGap);
+        for (int c = 0; c < 3; c++) {
+            float rx = navX + c * (navKeyW + gap);
+            PickerTarget t;
+            t.cx = rx + navKeyW / 2.0f; t.cy = ry + keyH / 2.0f;
+            t.w = navKeyW; t.h = keyH; t.label = navEdit[r][c].l;
+            t.action = { ActionType::Keyboard, navEdit[r][c].vk };
+            kb.push_back(std::move(t));
+        }
+    }
+    // Arrows (inverted-T) below the editing cluster. Labels built from code
+    // points so the source stays ASCII regardless of compiler encoding flags.
+    float arrowsTop = contentTop + 2 * (keyH + rowGap) + 12.0f;
+    auto addArrow = [&](wchar_t glyph, uint16_t vk, float col, float rowY) {
+        float rx = navX + col * (navKeyW + gap);
+        PickerTarget t;
+        t.cx = rx + navKeyW / 2.0f; t.cy = rowY + keyH / 2.0f;
+        t.w = navKeyW; t.h = keyH; t.label = std::wstring(1, glyph);
+        t.action = { ActionType::Keyboard, vk };
+        kb.push_back(std::move(t));
+    };
+    addArrow(static_cast<wchar_t>(0x2191), VK_UP, 1, arrowsTop);           // up
+    float arrowsRow2 = arrowsTop + keyH + rowGap;
+    addArrow(static_cast<wchar_t>(0x2190), VK_LEFT, 0, arrowsRow2);
+    addArrow(static_cast<wchar_t>(0x2193), VK_DOWN, 1, arrowsRow2);
+    addArrow(static_cast<wchar_t>(0x2192), VK_RIGHT, 2, arrowsRow2);
+    picker_targets_[1] = std::move(kb);
+
+    // ---------- Round-button tabs (Mouse=0, Xbox=2) ----------
+    const float boardX = (static_cast<float>(kTotalW) - 748.0f) / 2.0f;
+    const float boardY = contentTop;
+    const float R = 29.0f;
+    auto addRound = [&](std::vector<PickerTarget>& v, std::wstring l,
+                        float bx, float by, ActionType type, uint16_t code) {
+        PickerTarget t;
+        t.cx = boardX + bx; t.cy = boardY + by; t.w = 2 * R; t.h = 2 * R;
+        t.label = std::move(l); t.action = { type, code };
+        v.push_back(std::move(t));
+    };
+
+    std::vector<PickerTarget> mouse;
+    addRound(mouse, L"L", 300, 110, ActionType::MouseButton, 0);
+    addRound(mouse, L"R", 448, 110, ActionType::MouseButton, 1);
+    addRound(mouse, L"M", 374, 145, ActionType::MouseButton, 2);
+    addRound(mouse, std::wstring(1, static_cast<wchar_t>(0x2191)), 374, 80,  ActionType::MouseScroll, 1);
+    addRound(mouse, std::wstring(1, static_cast<wchar_t>(0x2193)), 374, 210, ActionType::MouseScroll, 0);
+    picker_targets_[0] = std::move(mouse);
+
+    std::vector<PickerTarget> pad;
+    addRound(pad, L"A",     600, 200, ActionType::XboxButton, 0x1000);
+    addRound(pad, L"B",     645, 155, ActionType::XboxButton, 0x2000);
+    addRound(pad, L"X",     555, 155, ActionType::XboxButton, 0x4000);
+    addRound(pad, L"Y",     600, 110, ActionType::XboxButton, 0x8000);
+    addRound(pad, L"LB",    224, 50,  ActionType::XboxButton, 0x0100);
+    addRound(pad, L"RB",    524, 50,  ActionType::XboxButton, 0x0200);
+    addRound(pad, L"Start", 334, 130, ActionType::XboxButton, 0x0010);
+    addRound(pad, L"Back",  414, 130, ActionType::XboxButton, 0x0020);
+    addRound(pad, L"LS",    324, 225, ActionType::XboxButton, 0x0040);
+    addRound(pad, L"RS",    424, 225, ActionType::XboxButton, 0x0080);
+    picker_targets_[2] = std::move(pad);
+}
+
+void QuickAccessOverlay::open_picker() {
+    int cur = cursor_.load(std::memory_order_relaxed);
+    auto bid = button_id_for_cursor(cur);
+    if (bid == config::ButtonId::Count) return;
+
+    auto profile = config_.get_profile();
+    const auto& action = profile.buttons[static_cast<int>(bid)];
+
+    int tab = 1;  // default landing on the keyboard
+    switch (action.type) {
+        case config::ActionType::MouseButton:
+        case config::ActionType::MouseScroll: tab = 0; break;
+        case config::ActionType::Keyboard:    tab = 1; break;
+        case config::ActionType::XboxButton:  tab = 2; break;
+        case config::ActionType::None:        tab = 2; break;
+    }
+
+    int idx = 0, boundTab = -1, boundIdx = -1;
+    const auto& ts = picker_targets_[tab];
+    for (int i = 0; i < static_cast<int>(ts.size()); i++) {
+        if (ts[i].action.type == action.type && ts[i].action.code == action.code) {
+            idx = i; boundTab = tab; boundIdx = i; break;
+        }
+    }
+
+    picker_bid_.store(static_cast<int>(bid), std::memory_order_relaxed);
+    picker_tab_.store(tab, std::memory_order_relaxed);
+    picker_cursor_[tab].store(idx, std::memory_order_relaxed);
+    picker_bound_tab_.store(boundTab, std::memory_order_relaxed);
+    picker_bound_idx_.store(boundIdx, std::memory_order_relaxed);
+    picker_open_.store(true, std::memory_order_relaxed);
+    invalidate();
+}
+
+void QuickAccessOverlay::picker_navigate(int dx, int dy) {
+    int tab = picker_tab_.load(std::memory_order_relaxed);
+    const auto& ts = picker_targets_[tab];
+    if (ts.empty()) return;
+    int cur = picker_cursor_[tab].load(std::memory_order_relaxed);
+    if (cur < 0 || cur >= static_cast<int>(ts.size())) cur = 0;
+    const auto& c = ts[cur];
+
+    // Directional (spatial) focus: pick the nearest target in the pressed
+    // direction, penalizing cross-axis offset so aligned keys win.
+    int best = -1;
+    float bestScore = 1e30f;
+    for (int i = 0; i < static_cast<int>(ts.size()); i++) {
+        if (i == cur) continue;
+        float ddx = ts[i].cx - c.cx;
+        float ddy = ts[i].cy - c.cy;
+        float primary, cross;
+        if (dx > 0)      { if (ddx <= 1.0f) continue;  primary = ddx;  cross = fabsf(ddy); }
+        else if (dx < 0) { if (ddx >= -1.0f) continue; primary = -ddx; cross = fabsf(ddy); }
+        else if (dy > 0) { if (ddy <= 1.0f) continue;  primary = ddy;  cross = fabsf(ddx); }
+        else             { if (ddy >= -1.0f) continue; primary = -ddy; cross = fabsf(ddx); }
+        float score = primary + cross * 2.0f;
+        if (score < bestScore) { bestScore = score; best = i; }
+    }
+    if (best >= 0) {
+        picker_cursor_[tab].store(best, std::memory_order_relaxed);
+        invalidate();
+    }
+}
+
+void QuickAccessOverlay::picker_switch_tab(int direction) {
+    int t = (picker_tab_.load(std::memory_order_relaxed) + direction + 3) % 3;
+    picker_tab_.store(t, std::memory_order_relaxed);
+    invalidate();
+}
+
+void QuickAccessOverlay::picker_bind_current() {
+    int bid = picker_bid_.load(std::memory_order_relaxed);
+    if (bid < 0) { close_picker(); return; }
+    int tab = picker_tab_.load(std::memory_order_relaxed);
+    const auto& ts = picker_targets_[tab];
+    int cur = picker_cursor_[tab].load(std::memory_order_relaxed);
+    if (cur < 0 || cur >= static_cast<int>(ts.size())) { close_picker(); return; }
+
+    auto profile = config_.get_profile();
+    profile.buttons[bid] = ts[cur].action;
+    config_.set_profile(profile);
+    mapper_.apply_profile(profile, synth_);
+    refresh_all(profile);
+    close_picker();
+}
+
+void QuickAccessOverlay::picker_set_none() {
+    int bid = picker_bid_.load(std::memory_order_relaxed);
+    if (bid < 0) { close_picker(); return; }
+    auto profile = config_.get_profile();
+    profile.buttons[bid] = { config::ActionType::None, 0 };
+    config_.set_profile(profile);
+    mapper_.apply_profile(profile, synth_);
+    refresh_all(profile);
+    close_picker();
+}
+
+void QuickAccessOverlay::press_y() {
+    if (!picker_open_.load(std::memory_order_relaxed)) return;
+    picker_set_none();
+}
+
+void QuickAccessOverlay::close_picker() {
+    picker_open_.store(false, std::memory_order_relaxed);
+    invalidate();
+}
+
+void QuickAccessOverlay::draw_picker_tabs(float x, float y, float w) {
+    if (!rt_ || !mini_fmt_) return;
+    int active = picker_tab_.load(std::memory_order_relaxed);
+    const float gap = 10.0f;
+    float tw = (w - 2 * gap) / 3.0f;
+    for (int i = 0; i < 3; i++) {
+        float tx = x + i * (tw + gap);
+        D2D1_ROUNDED_RECT r;
+        r.rect = D2D1::RectF(tx, y, tx + tw, y + kPickerTabH);
+        r.radiusX = 6.0f; r.radiusY = 6.0f;
+        bool sel = (i == active);
+        rt_->FillRoundedRectangle(r, sel ? br_hover_ : br_sector_);
+        if (sel) {
+            rt_->FillRectangle(
+                D2D1::RectF(tx + 6, y + kPickerTabH - 3, tx + tw - 6, y + kPickerTabH - 1),
+                br_active_);
+        }
+        rt_->DrawText(kPickerTabLabels[i], static_cast<UINT32>(wcslen(kPickerTabLabels[i])),
+                      mini_fmt_, r.rect, sel ? br_text_ : br_dim_text_,
+                      D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+    }
+}
+
+void QuickAccessOverlay::draw_picker() {
+    if (!rt_) return;
+    float my = menu_top();
+
+    // Tab bar
+    float tabsX = static_cast<float>(kPad);
+    float tabsY = my + static_cast<float>(kPad);
+    float tabsW = static_cast<float>(kTotalW - 2 * kPad);
+    draw_picker_tabs(tabsX, tabsY, tabsW);
+
+    int tab  = picker_tab_.load(std::memory_order_relaxed);
+    int cur  = picker_cursor_[tab].load(std::memory_order_relaxed);
+    int btab = picker_bound_tab_.load(std::memory_order_relaxed);
+    int bidx = picker_bound_idx_.load(std::memory_order_relaxed);
+    const auto& ts = picker_targets_[tab];
+    bool round = (tab != 1);
+
+    for (int i = 0; i < static_cast<int>(ts.size()); i++) {
+        const auto& t = ts[i];
+        bool selected = (i == cur);
+        bool bound = (btab == tab && bidx == i);
+        D2D1_RECT_F rect = D2D1::RectF(t.cx - t.w / 2, t.cy - t.h / 2, t.cx + t.w / 2, t.cy + t.h / 2);
+        ID2D1SolidColorBrush* fill = selected ? br_hover_ : br_sector_;
+        ID2D1SolidColorBrush* txt  = bound ? br_active_ : br_text_;
+
+        if (round) {
+            D2D1_ELLIPSE e = D2D1::Ellipse(D2D1::Point2F(t.cx, t.cy), t.w / 2, t.h / 2);
+            rt_->FillEllipse(e, fill);
+            if (selected)   rt_->DrawEllipse(e, br_active_, 2.5f);
+            else if (bound) rt_->DrawEllipse(e, br_active_, 1.5f);
+            rt_->DrawText(t.label.c_str(), static_cast<UINT32>(t.label.size()),
+                          mini_fmt_, rect, txt, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+        } else {
+            D2D1_ROUNDED_RECT rr; rr.rect = rect; rr.radiusX = 5.0f; rr.radiusY = 5.0f;
+            rt_->FillRoundedRectangle(rr, fill);
+            if (selected)   rt_->DrawRoundedRectangle(rr, br_active_, 2.0f);
+            else if (bound) rt_->DrawRoundedRectangle(rr, br_active_, 1.5f);
+            rt_->DrawText(t.label.c_str(), static_cast<UINT32>(t.label.size()),
+                          key_fmt_, rect, txt, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+        }
     }
 }
 

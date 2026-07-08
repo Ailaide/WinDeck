@@ -97,8 +97,11 @@ public:
     void navigate(int dx, int dy);
     void activate();                     // A button
     void press_x();                      // X button: enter submenu or cycle remap backward
+    void press_y();                      // Y button: in the remap picker, clear to None
     void hide_submenu();                 // B in submenu: close submenu
-    void cycle_category(int direction);  // LB/RB: switch remap category
+    void cycle_category(int direction);  // LB/RB: switch remap category / picker device tab
+    void close_picker();                 // B in picker: return to the grid
+    bool is_picker_open() const { return picker_open_.load(std::memory_order_relaxed); }
 
     bool is_visible() const { return visible_.load(std::memory_order_relaxed); }
     bool is_submenu_open() const { return submenu_open_.load(std::memory_order_relaxed); }
@@ -133,6 +136,13 @@ private:
         float        step;
     };
 
+    // A selectable target in the remap picker (a key, mouse button, or Xbox button).
+    struct PickerTarget {
+        float cx = 0, cy = 0, w = 0, h = 0;   // absolute window coords + size
+        std::wstring label;
+        config::ButtonAction action;
+    };
+
     // Paint
     void on_paint() override;
     void on_show(WPARAM wp) override;
@@ -144,12 +154,22 @@ private:
     void draw_action_bar();
     void draw_button_glyph(float cx, float cy, wchar_t letter);
     void draw_description();
-    void draw_icon(int index, float x, float y);
+    void draw_icon(int index, float x, float y, ID2D1SolidColorBrush* brush);
     void draw_small_tile(float x, float y, float w, const std::wstring& label,
                          const std::wstring& value, bool selected);
     void draw_mini_tile(float x, float y, float w, const std::wstring& label,
                         const std::wstring& value, bool selected);
     void draw_submenu();
+
+    // Remap picker (Mouse / Keyboard / Xbox tabs)
+    void build_picker_targets();
+    void open_picker();
+    void picker_navigate(int dx, int dy);
+    void picker_switch_tab(int direction);
+    void picker_bind_current();
+    void picker_set_none();
+    void draw_picker();
+    void draw_picker_tabs(float x, float y, float w);
 
     // Layout helpers
     float menu_top() const { return static_cast<float>(kActionBarH + kActionBarGap); }
@@ -184,7 +204,6 @@ private:
     static LRESULT CALLBACK kbd_hook_proc(int code, WPARAM wp, LPARAM lp);
 
     // Remap helpers
-    void cycle_remap_at_cursor(int direction);
     config::ButtonId button_id_for_cursor(int cursor) const;
     std::wstring action_display(const config::ButtonAction& action) const;
 
@@ -196,6 +215,15 @@ private:
     std::atomic<bool> visible_{false};
     std::atomic<int>  cursor_{0};
     std::atomic<bool> submenu_open_{false};
+
+    // Remap picker state (all atomics: written on input thread, read while painting)
+    std::atomic<bool> picker_open_{false};
+    std::atomic<int>  picker_tab_{0};                  // 0=Mouse, 1=Keyboard, 2=Xbox
+    std::array<std::atomic<int>, 3> picker_cursor_{};  // focused target per tab
+    std::atomic<int>  picker_bid_{-1};                 // ButtonId being remapped
+    std::atomic<int>  picker_bound_tab_{-1};           // tab/idx of the current binding
+    std::atomic<int>  picker_bound_idx_{-1};
+    std::array<std::vector<PickerTarget>, 3> picker_targets_;  // built once in ctor
 
     mutable std::mutex tiles_mtx_;
     std::array<TileData, kTiles> tiles_;
@@ -233,10 +261,10 @@ private:
     IDWriteTextFormat* action_fmt_ = nullptr;
     IDWriteTextFormat* desc_fmt_   = nullptr;
     IDWriteTextFormat* mini_fmt_   = nullptr;  // mini tile text
+    IDWriteTextFormat* key_fmt_    = nullptr;  // keyboard key labels (picker)
     ID2D1SolidColorBrush* br_slider_bg_ = nullptr;
     ID2D1SolidColorBrush* br_dim_text_  = nullptr;
     ID2D1SolidColorBrush* br_dim_overlay_ = nullptr;  // submenu dim
-    ID2D1SolidColorBrush* br_danger_ = nullptr;       // Delete button text
 };
 
 } // namespace windeck::overlay

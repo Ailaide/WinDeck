@@ -2,8 +2,10 @@
 
 namespace windeck::output {
 
-// Extended keys: navigation cluster + arrows. These require KEYEVENTF_EXTENDEDKEY
-// so the system distinguishes them from numpad keys with the same scan code.
+// Extended keys: navigation cluster, arrows, right-side modifiers, and the
+// GUI/Application keys. These require KEYEVENTF_EXTENDEDKEY so the system sends
+// the E0-prefixed scan code (and distinguishes them from numpad keys that share
+// a scan code). The remap picker can bind Win/Menu, so they must be here too.
 static bool is_extended_key(uint16_t vk) {
     switch (vk) {
         case VK_PRIOR: case VK_NEXT:
@@ -11,6 +13,7 @@ static bool is_extended_key(uint16_t vk) {
         case VK_LEFT:  case VK_UP:  case VK_RIGHT: case VK_DOWN:
         case VK_INSERT: case VK_DELETE:
         case VK_RCONTROL: case VK_RMENU:
+        case VK_LWIN: case VK_RWIN: case VK_APPS:
         case VK_DIVIDE: case VK_SNAPSHOT:
             return true;
         default:
