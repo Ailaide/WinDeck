@@ -29,5 +29,7 @@ Desktop.ini
 # Logs
 *.log
 
-# Claude
+# Claude / agent instructions (kept local, not tracked in Git)
 .claude/
+CLAUDE.md
+AGENTS.md
