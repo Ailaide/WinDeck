@@ -1,0 +1,67 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Windows x64 (Release)
+    runs-on: windows-latest
+    env:
+      # vcpkg binary cache, persisted between runs by actions/cache below.
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.vcpkg-cache
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      # The runner image ships vcpkg; the package versions come from the
+      # baseline pinned in vcpkg-configuration.json, not from this checkout.
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          "IMAGE_VERSION=$env:ImageVersion" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      # Package binaries depend on the compiler, which changes with the runner
+      # image, so the image version is part of the key.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-x64-windows-static-${{ env.IMAGE_VERSION }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-x64-windows-static-${{ env.IMAGE_VERSION }}-
+            vcpkg-x64-windows-static-
+
+      - name: Configure
+        run: cmake --preset release -DWINDECK_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build --preset release --parallel
+
+      - name: Test
+        run: ctest --preset release
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: windeck-${{ github.sha }}-win64
+          path: |
+            build/release/Release/windeck.exe
+            build/release/Release/restore_neptune.exe
+          if-no-files-found: error
