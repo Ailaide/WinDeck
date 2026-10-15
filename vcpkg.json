@@ -1,6 +1,5 @@
 {
   "name": "windeck",
-  "version": "0.1.0",
   "description": "Steam Deck Neptune controller to Xbox 360 gamepad remapper for Windows",
   "dependencies": [
     "hidapi",

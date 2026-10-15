@@ -4,6 +4,11 @@ project(WinDeck VERSION 0.2.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Sources are UTF-8; compile them as such regardless of the system code page.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # --- vcpkg dependencies ---
 find_package(hidapi CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -13,7 +18,8 @@ find_package(nlohmann_json CONFIG REQUIRED)
 add_library(ViGEmClient STATIC
     extern/ViGEmClient/src/ViGEmClient.cpp
 )
-target_include_directories(ViGEmClient PUBLIC
+# SYSTEM: third-party headers (Client.h is Latin-1 encoded) do not emit warnings.
+target_include_directories(ViGEmClient SYSTEM PUBLIC
     extern/ViGEmClient/include
 )
 target_link_libraries(ViGEmClient PRIVATE setupapi)
@@ -45,6 +51,9 @@ add_executable(windeck
 
 target_include_directories(windeck PRIVATE src)
 
+# Single source of truth for the version: project(VERSION) above.
+target_compile_definitions(windeck PRIVATE WINDECK_VERSION="${PROJECT_VERSION}")
+
 # Embed application manifest (UAC level + WinRT compatibility)
 if(MSVC)
     target_sources(windeck PRIVATE "${CMAKE_SOURCE_DIR}/resources/windeck.manifest")
@@ -62,9 +71,11 @@ target_link_libraries(windeck PRIVATE
     dwrite
 )
 
-# Auto-deploy release binary to Steam Deck network share after successful build.
-if(WIN32)
-    set(WINDECK_DEPLOY_DIR "//STEAMDECK/Shared")
+# --- Optional post-build deploy ---
+# Set WINDECK_DEPLOY_DIR (e.g. a network share on the Deck) to copy windeck.exe
+# there after every successful build. Empty by default: no deploy.
+set(WINDECK_DEPLOY_DIR "" CACHE PATH "Copy windeck.exe to this directory after each build (empty = disabled)")
+if(WINDECK_DEPLOY_DIR)
     add_custom_command(TARGET windeck POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${WINDECK_DEPLOY_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

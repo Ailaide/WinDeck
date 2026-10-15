@@ -367,7 +367,7 @@ int main() {
     }
 
     setup_logging();
-    spdlog::info("WinDeck v0.2.0 starting");
+    spdlog::info("WinDeck v{} starting", WINDECK_VERSION);
 
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
