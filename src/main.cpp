@@ -86,7 +86,7 @@ static void open_touch_keyboard() {
         return;
     }
 
-    // Touch keyboard tray button (AutomationId "TipBandButtonID", localized-name fallback).
+    // Touch keyboard tray button, located by its language-independent AutomationId.
     IUIAutomationCondition* cond_id = nullptr;
     VARIANT var_id;
     var_id.vt = VT_BSTR;
@@ -98,44 +98,6 @@ static void open_touch_keyboard() {
     if (cond_id) {
         hr = tray_elem->FindFirst(TreeScope_Descendants, cond_id, &kbd_btn);
         cond_id->Release();
-    }
-
-    if (!kbd_btn) {
-        IUIAutomationCondition* cond_type = nullptr;
-        VARIANT var_type;
-        var_type.vt = VT_I4;
-        var_type.lVal = UIA_ButtonControlTypeId;
-        uia->CreatePropertyCondition(UIA_ControlTypePropertyId, var_type, &cond_type);
-
-        IUIAutomationElementArray* buttons = nullptr;
-        if (cond_type) {
-            tray_elem->FindAll(TreeScope_Descendants, cond_type, &buttons);
-            cond_type->Release();
-        }
-
-        if (buttons) {
-            int count = 0;
-            buttons->get_Length(&count);
-            for (int i = 0; i < count && !kbd_btn; i++) {
-                IUIAutomationElement* elem = nullptr;
-                buttons->GetElement(i, &elem);
-                if (elem) {
-                    BSTR name = nullptr;
-                    elem->get_CurrentName(&name);
-                    if (name) {
-                        std::wstring wname(name);
-                        if (wname.find(L"keyboard") != std::wstring::npos ||
-                            wname.find(L"Keyboard") != std::wstring::npos ||
-                            wname.find(L"Touch") != std::wstring::npos) {
-                            kbd_btn = elem;
-                        }
-                        SysFreeString(name);
-                    }
-                    if (kbd_btn != elem) elem->Release();
-                }
-            }
-            buttons->Release();
-        }
     }
 
     if (kbd_btn) {
