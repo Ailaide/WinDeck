@@ -6,12 +6,9 @@
 #include <cfgmgr32.h>
 
 #include "hidhide/hidhide_client.h"
+#include "driver/installer.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
-#include <urlmon.h>
-#include <shellapi.h>
-#include <shlobj.h>
-#pragma comment(lib, "urlmon.lib")
 
 // HidHide IOCTL codes
 // Device type 32769 (0x8001), METHOD_BUFFERED, FILE_READ_DATA
@@ -188,44 +185,32 @@ bool HidHideClient::is_active() {
     return val != FALSE;
 }
 
+// HidHide 1.5.230 (nefarius/HidHide).
+// SHA-256 matches the winget manifest for Nefarius.HidHide 1.5.230.
+static constexpr windeck::driver::InstallerSpec kHidHideInstaller = {
+    L"https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe",
+    "F4BBBCB82E6258641B887C74BC81C4C5F66E4AA811808DFC304347687B7605F6",
+    L"HidHide_Installer.exe",
+    L"/quiet /norestart",
+};
+
+static constexpr uint32_t kHidHideInstallTimeoutMs = 60 * 1000;
+
 static bool download_and_install_hidhide() {
-    spdlog::info("Downloading HidHide installer...");
+    using windeck::driver::InstallerResult;
 
-    wchar_t temp_path[MAX_PATH];
-    GetTempPathW(MAX_PATH, temp_path);
-    std::wstring installer_path = std::wstring(temp_path) + L"HidHide_Installer.exe";
-
-    // Download latest release from nefarius
-    const wchar_t* url = L"https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe";
-    HRESULT hr = URLDownloadToFileW(nullptr, url, installer_path.c_str(), 0, nullptr);
-    if (FAILED(hr)) {
-        spdlog::error("Failed to download HidHide installer (HRESULT {:#x})", static_cast<unsigned>(hr));
+    spdlog::info("Downloading HidHide installer (UAC elevation will be requested)...");
+    uint32_t exit_code = 0;
+    InstallerResult result = windeck::driver::download_verify_and_run(
+        kHidHideInstaller, kHidHideInstallTimeoutMs, exit_code);
+    if (result == InstallerResult::kTimedOut) {
+        spdlog::warn("HidHide installer timed out");
         return false;
     }
-
-    spdlog::info("Download complete, launching installer (UAC elevation required)...");
-
-    SHELLEXECUTEINFOW sei{};
-    sei.cbSize = sizeof(sei);
-    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
-    sei.lpVerb = L"runas";
-    sei.lpFile = installer_path.c_str();
-    sei.lpParameters = L"/quiet /norestart";
-    sei.nShow = SW_SHOWNORMAL;
-
-    if (!ShellExecuteExW(&sei)) {
-        spdlog::error("Failed to launch HidHide installer");
+    if (result != InstallerResult::kFinished) {
+        spdlog::error("Failed to install HidHide");
         return false;
     }
-
-    spdlog::info("Waiting for installation to complete...");
-    WaitForSingleObject(sei.hProcess, 60000); // 60s timeout
-
-    DWORD exit_code = 0;
-    GetExitCodeProcess(sei.hProcess, &exit_code);
-    CloseHandle(sei.hProcess);
-
-    DeleteFileW(installer_path.c_str());
 
     if (exit_code == 0) {
         spdlog::info("HidHide installed successfully");

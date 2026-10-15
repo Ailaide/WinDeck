@@ -35,6 +35,7 @@ add_executable(windeck
     src/mapper/stick_mapper.cpp
     src/mapper/trigger_mapper.cpp
     src/driver/driver_manager.cpp
+    src/driver/installer.cpp
     src/config/config.cpp
     src/hidhide/hidhide_client.cpp
     src/mapper/dpad_mapper.cpp
@@ -67,6 +68,7 @@ target_link_libraries(windeck PRIVATE
     ViGEmClient
     setupapi
     urlmon
+    bcrypt
     d2d1
     dwrite
 )
