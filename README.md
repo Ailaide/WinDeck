@@ -47,7 +47,7 @@ WinDeck reads every Neptune input over HID and re-exposes it — as an Xbox 360 
 Profiles are JSON files describing the full mapping and mode configuration. They live in the `profiles` folder next to `windeck.exe` and can be created, switched, and deleted from the Quick Access Menu.
 
 - **Default** is built in and always available; it cannot be edited or overwritten.
-- Example profiles ship in [`resources/profiles/`](resources/profiles/) (and in the `profiles` folder of the release archive). Copy one into your `profiles` folder to try it.
+- Example profiles ship in [`resources/profiles/`](resources/profiles/); copy one into your `profiles` folder to try it. The release archive already contains them in its `profiles` folder.
 
 > **Note:** the profile JSON format is not yet stable and may change between versions without migration — recreate old profiles if they stop loading.
 
