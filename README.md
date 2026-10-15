@@ -97,6 +97,8 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 }
 ```
 
+To build and run the unit tests, see [CONTRIBUTING.md](CONTRIBUTING.md#unit-tests).
+
 ## Tech stack
 
 - **C++20**, **CMake** 3.21+ with **vcpkg**
@@ -130,6 +132,10 @@ WinDeck runs a 3-thread model: a high-priority input loop, the main thread (mess
 - [ViGEm](https://github.com/nefarius/ViGEmBus) and [HidHide](https://github.com/nefarius/HidHide) by Benjamin Höglinger-Stelzer (Nefarius).
 
 Steam and Steam Deck are trademarks of Valve Corporation. WinDeck is an independent project and is not affiliated with or endorsed by Valve.
+
+## Contributing
+
+Bug reports, ideas, and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test, and submit changes. Please report security problems privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

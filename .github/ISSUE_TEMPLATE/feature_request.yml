@@ -1,0 +1,55 @@
+name: Feature request
+description: Suggest a new feature or an improvement to an existing one.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Please search the existing issues first — someone may have asked for the same thing already.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: Describe the situation and the problem you'd like WinDeck to solve, for example the game or app you're using it with.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: How should it work?
+      description: Describe the behavior you'd like. If it involves the Quick Access Menu or a profile setting, describe what you'd set and what should happen.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of WinDeck does it affect?
+      multiple: true
+      options:
+        - Buttons and back paddles
+        - Sticks
+        - Triggers
+        - D-pad
+        - Touchpads
+        - Gyro
+        - Rumble and haptics
+        - Quick Access Menu
+        - Radial menu
+        - Profiles
+        - Installation and drivers
+        - Other
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered (optional)
+      description: Workarounds you use today, or how other tools handle it.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else? (optional)
+      description: Mockups, screenshots, or links that help explain the idea.

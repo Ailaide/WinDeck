@@ -1,0 +1,91 @@
+name: Bug report
+description: Something in WinDeck doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Before you start, please check [Known issues & troubleshooting](https://github.com/Ailaide/WinDeck#known-issues--troubleshooting) in the README — especially that **Steam is fully closed**, since WinDeck receives no input while it runs.
+
+        Security problems should be reported privately instead: see [SECURITY.md](https://github.com/Ailaide/WinDeck/blob/main/SECURITY.md).
+
+  - type: input
+    id: windeck-version
+    attributes:
+      label: WinDeck version
+      description: The release you are running. The first line of `windeck.log` shows it (`WinDeck v0.2.0 starting`). For a source build, give the commit.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: Edition, version, and build — run `winver` to see them.
+      placeholder: "Windows 11 Pro 24H2 (build 26100.4061)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deck-model
+    attributes:
+      label: Steam Deck model
+      options:
+        - LCD
+        - OLED
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: steam-running
+    attributes:
+      label: Was Steam running?
+      description: Steam takes over the controller. Exit it from the tray icon (right-click → Exit), not just by closing its window.
+      options:
+        - No, Steam was fully closed
+        - Yes, Steam was running
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What went wrong, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps that trigger the problem. Mention the game or app if it only happens there.
+      placeholder: |
+        1. Start windeck.exe
+        2. Open the Quick Access Menu with the Steam button
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: windeck.log
+      description: Attach `windeck.log` from the folder that contains `windeck.exe` by dragging the file into this box. Please reproduce the problem first so the log covers it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: profile
+    attributes:
+      label: Profile (optional)
+      description: If the problem depends on your mapping, attach the profile JSON from the `profiles` folder next to `windeck.exe`, or name the example profile you used.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else? (optional)
+      description: Screenshots, other controller software you have installed (HidHide, DS4Windows, Steam Input, ...), or anything you already tried.
