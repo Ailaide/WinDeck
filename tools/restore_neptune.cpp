@@ -1,5 +1,6 @@
 // Standalone tool to restore Neptune controller to default (lizard mode).
-// Compile: cl restore_neptune.cpp /I path_to_hidapi /link hidapi.lib
+// Use it if WinDeck exits abnormally and the controller stays without its
+// default mouse/keyboard emulation. Built by CMake as target `restore_neptune`.
 #include <cstdio>
 #include <cstdint>
 #include <hidapi.h>

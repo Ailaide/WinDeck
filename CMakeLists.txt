@@ -73,6 +73,12 @@ target_link_libraries(windeck PRIVATE
     dwrite
 )
 
+# --- restore_neptune: standalone recovery tool ---
+# Resets the controller to its factory (lizard mode) settings if WinDeck
+# exits abnormally and leaves the firmware configured.
+add_executable(restore_neptune tools/restore_neptune.cpp)
+target_link_libraries(restore_neptune PRIVATE hidapi::hidapi)
+
 # --- Optional post-build deploy ---
 # Set WINDECK_DEPLOY_DIR (e.g. a network share on the Deck) to copy windeck.exe
 # there after every successful build. Empty by default: no deploy.
