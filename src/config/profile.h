@@ -18,6 +18,8 @@ enum class ActionType : uint8_t {
 struct ButtonAction {
     ActionType type = ActionType::XboxButton;
     uint16_t   code = 0;  // XUSB_GAMEPAD_* or VK_* or mouse button index
+
+    bool operator==(const ButtonAction&) const = default;
 };
 
 // Stick operating mode
@@ -35,6 +37,8 @@ struct StickConfig {
     bool          invert_x = false;
     bool          invert_y = false;
     float         overlap = 0.5f;  // for WASD/Arrows modes
+
+    bool operator==(const StickConfig&) const = default;
 };
 
 struct TriggerConfig {
@@ -43,6 +47,8 @@ struct TriggerConfig {
     bool           has_button = false;
     float          button_threshold = 0.8f;
     ButtonAction   button_action;
+
+    bool operator==(const TriggerConfig&) const = default;
 };
 
 // D-Pad operating mode
@@ -51,6 +57,8 @@ enum class DpadMode : uint8_t { Dpad, Wasd, Arrows };
 struct DpadConfig {
     DpadMode mode = DpadMode::Dpad;
     float    overlap = 0.5f;  // for WASD/Arrows modes
+
+    bool operator==(const DpadConfig&) const = default;
 };
 
 // Touchpad operating mode
@@ -82,6 +90,8 @@ struct TouchpadConfig {
         {ActionType::Keyboard, '5'}, {ActionType::Keyboard, '6'},
         {ActionType::Keyboard, '7'}, {ActionType::Keyboard, '8'},
     }};
+
+    bool operator==(const TouchpadConfig&) const = default;
 };
 
 // Gyro operating mode
@@ -93,6 +103,8 @@ struct GyroConfig {
     float          sensitivity_y = 1.0f;
     bool           invert_x = false;
     bool           invert_y = false;
+
+    bool operator==(const GyroConfig&) const = default;
 };
 
 // All remappable buttons on the controller (excluding system buttons)
@@ -174,6 +186,8 @@ struct Profile {
         // Left touchpad: scroll
         left_touchpad.mode = TouchpadMode::Scroll;
     }
+
+    bool operator==(const Profile&) const = default;
 };
 
 } // namespace windeck::config

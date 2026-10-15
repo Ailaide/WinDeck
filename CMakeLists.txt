@@ -1,4 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
+
+# Unit tests are off for regular builds; CI turns them on. Must be set before
+# project() so the vcpkg toolchain installs the "tests" manifest feature (Catch2).
+option(WINDECK_BUILD_TESTS "Build the windeck_tests unit test executable" OFF)
+if(WINDECK_BUILD_TESTS)
+    list(APPEND VCPKG_MANIFEST_FEATURES "tests")
+endif()
+
 project(WinDeck VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -24,27 +32,40 @@ target_include_directories(ViGEmClient SYSTEM PUBLIC
 )
 target_link_libraries(ViGEmClient PRIVATE setupapi)
 
-# --- WinDeck executable ---
-add_executable(windeck
-    src/main.cpp
-    src/neptune/neptune_device.cpp
-    src/output/virtual_xbox.cpp
+# --- windeck_core: logic that needs no controller, driver or overlay ---
+# Profiles and their JSON format, the per-control mappers, the output modes and
+# SyntheticInput. Linked by windeck and by the unit tests. ViGEmClient provides
+# the XUSB report types the mappers fill in.
+add_library(windeck_core STATIC
+    src/config/config.cpp
     src/output/synthetic_input.cpp
-    src/mapper/mapper.cpp
     src/mapper/button_mapper.cpp
     src/mapper/stick_mapper.cpp
     src/mapper/trigger_mapper.cpp
-    src/driver/driver_manager.cpp
-    src/driver/installer.cpp
-    src/config/config.cpp
-    src/hidhide/hidhide_client.cpp
     src/mapper/dpad_mapper.cpp
-    src/mapper/touchpad_mapper.cpp
     src/mapper/gyro_mapper.cpp
     src/modes/directional_mode.cpp
     src/modes/mouse_mode.cpp
     src/modes/inertia.cpp
     src/modes/radial_menu_mode.cpp
+)
+target_include_directories(windeck_core PUBLIC src)
+target_link_libraries(windeck_core PUBLIC
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    ViGEmClient
+)
+
+# --- WinDeck executable ---
+add_executable(windeck
+    src/main.cpp
+    src/neptune/neptune_device.cpp
+    src/output/virtual_xbox.cpp
+    src/mapper/mapper.cpp
+    src/mapper/touchpad_mapper.cpp
+    src/driver/driver_manager.cpp
+    src/driver/installer.cpp
+    src/hidhide/hidhide_client.cpp
     src/overlay/overlay_base.cpp
     src/overlay/radial_overlay.cpp
     src/overlay/quick_access_overlay.cpp
@@ -62,9 +83,8 @@ if(MSVC)
 endif()
 
 target_link_libraries(windeck PRIVATE
+    windeck_core
     hidapi::hidapi
-    spdlog::spdlog
-    nlohmann_json::nlohmann_json
     ViGEmClient
     setupapi
     urlmon
@@ -91,4 +111,10 @@ if(WINDECK_DEPLOY_DIR)
             "${WINDECK_DEPLOY_DIR}/windeck.exe"
         COMMENT "Deploying windeck.exe to ${WINDECK_DEPLOY_DIR}"
     )
+endif()
+
+# --- Unit tests ---
+if(WINDECK_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()

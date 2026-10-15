@@ -5,5 +5,13 @@
     "hidapi",
     "spdlog",
     "nlohmann-json"
-  ]
+  ],
+  "features": {
+    "tests": {
+      "description": "Unit tests (enabled by the WINDECK_BUILD_TESTS CMake option)",
+      "dependencies": [
+        "catch2"
+      ]
+    }
+  }
 }
