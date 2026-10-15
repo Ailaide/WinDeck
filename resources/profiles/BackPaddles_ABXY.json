@@ -24,7 +24,9 @@
     "outer_deadzone": 0.95,
     "curve": "linear",
     "mouse_sensitivity": 1.0,
-    "overlap": 0.0
+    "invert_x": false,
+    "invert_y": false,
+    "overlap": 0.5
   },
   "right_stick": {
     "mode": "stick",
@@ -32,28 +34,40 @@
     "outer_deadzone": 0.95,
     "curve": "linear",
     "mouse_sensitivity": 1.0,
-    "overlap": 0.0
+    "invert_x": false,
+    "invert_y": false,
+    "overlap": 0.5
   },
   "left_trigger": { "threshold": 0.02 },
   "right_trigger": { "threshold": 0.02 },
-  "dpad": { "mode": "dpad" },
+  "dpad": { "mode": "dpad", "overlap": 0.5 },
   "left_touchpad": {
-    "mode": "trackpad_inertia",
+    "mode": "scroll",
     "pressure_threshold": 6144,
     "sensitivity": 1.0,
-    "friction": 0.95,
-    "click_action": { "type": "mouse", "code": 0 }
+    "inertia": 0.95,
+    "acceleration": "normal",
+    "click_action": { "type": "mouse", "code": 0 },
+    "invert_x": false,
+    "invert_y": false,
+    "overlap": 0.5
   },
   "right_touchpad": {
     "mode": "trackpad_inertia",
     "pressure_threshold": 6144,
     "sensitivity": 1.0,
-    "friction": 0.95,
-    "click_action": { "type": "mouse", "code": 0 }
+    "inertia": 0.95,
+    "acceleration": "normal",
+    "click_action": { "type": "mouse", "code": 0 },
+    "invert_x": false,
+    "invert_y": false,
+    "overlap": 0.5
   },
   "gyro": {
-    "mode": "off",
+    "mode": "disabled",
     "sensitivity_x": 1.0,
-    "sensitivity_y": 1.0
+    "sensitivity_y": 1.0,
+    "invert_x": false,
+    "invert_y": false
   }
 }

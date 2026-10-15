@@ -24,7 +24,7 @@ public:
     // Replace the current profile (thread-safe, write lock).
     void set_profile(const Profile& profile);
 
-    // Get the config directory path (%APPDATA%/WinDeck/).
+    // Get the config directory path (the folder containing windeck.exe).
     const std::filesystem::path& config_dir() const { return config_dir_; }
 
     // List available profile names.
