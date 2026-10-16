@@ -121,6 +121,10 @@ private:
 
     enum class ParamType { Slider, Button, Toggle, Remap };
 
+    // Where a picker binding is written. Button = a grid button (buttons[bid]);
+    // RadialKey/ClickAction = a touchpad action edited from the submenu.
+    enum class RemapDest { Button, RadialKey, ClickAction };
+
     struct TileData {
         std::wstring label;
         std::wstring mode_text;
@@ -134,6 +138,8 @@ private:
         float        min_val;
         float        max_val;
         float        step;
+        RemapDest    remap_dest   = RemapDest::Button;  // for ParamType::Remap
+        int          remap_sector = 0;                  // for RadialKey dest
     };
 
     // A selectable target in the remap picker (a key, mouse button, or Xbox button).
@@ -163,7 +169,10 @@ private:
 
     // Remap picker (Mouse / Keyboard / Xbox tabs)
     void build_picker_targets();
-    void open_picker();
+    void open_picker();                  // grid button under the cursor
+    void open_picker_submenu(RemapDest dest, int pad_tile, int sector);  // touchpad action from submenu
+    void open_picker_for(const config::ButtonAction& current);           // shared: seed tab/cursor, open
+    void picker_write(const config::ButtonAction& action);               // write to the active destination
     void picker_navigate(int dx, int dy);
     void picker_switch_tab(int direction);
     void picker_bind_current();
@@ -220,7 +229,11 @@ private:
     std::atomic<bool> picker_open_{false};
     std::atomic<int>  picker_tab_{0};                  // 0=Mouse, 1=Keyboard, 2=Xbox
     std::array<std::atomic<int>, 3> picker_cursor_{};  // focused target per tab
-    std::atomic<int>  picker_bid_{-1};                 // ButtonId being remapped
+    std::atomic<int>  picker_bid_{-1};                 // ButtonId being remapped (Button dest)
+    std::atomic<int>  picker_dest_{0};                 // RemapDest of the active binding
+    std::atomic<int>  picker_pad_{0};                  // MainTileId (LPad/RPad) for touchpad dests
+    std::atomic<int>  picker_sector_{0};               // radial sector (RadialKey dest)
+    std::atomic<bool> picker_from_submenu_{false};     // reopen the submenu when the picker closes
     std::atomic<int>  picker_bound_tab_{-1};           // tab/idx of the current binding
     std::atomic<int>  picker_bound_idx_{-1};
     std::array<std::vector<PickerTarget>, 3> picker_targets_;  // built once in ctor

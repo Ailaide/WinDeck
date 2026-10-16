@@ -172,52 +172,6 @@ static const wchar_t* kMainDescriptions[] = {
     L"Right touchpad output. Same modes as left touchpad. Typically used for mouse aiming or radial menus.",
 };
 
-// --- Remap cycling data ---
-
-static constexpr config::ActionType kCategoryOrder[] = {
-    config::ActionType::Keyboard,
-    config::ActionType::XboxButton,
-    config::ActionType::MouseButton,
-    config::ActionType::MouseScroll,
-    config::ActionType::None,
-};
-static constexpr int kNumCategories = 5;
-
-static uint16_t first_code_for_type(config::ActionType t) {
-    switch (t) {
-        case config::ActionType::Keyboard:    return '1';
-        case config::ActionType::XboxButton:  return 0x1000;
-        case config::ActionType::MouseButton: return 0;
-        case config::ActionType::MouseScroll: return 1; // scroll up
-        case config::ActionType::None:        return 0;
-        default: return 0;
-    }
-}
-
-static const uint16_t kKeyCodes[] = {
-    '1','2','3','4','5','6','7','8','9','0',
-    'Q','W','E','R','T','Y','U','I','O','P',
-    'A','S','D','F','G','H','J','K','L',
-    'Z','X','C','V','B','N','M',
-    0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7A,0x7B,
-    0x20, 0x0D, 0x1B, 0x09,
-};
-static constexpr int kNumKeys = sizeof(kKeyCodes) / sizeof(kKeyCodes[0]);
-
-static const uint16_t kXboxCodes[] = {
-    0x1000, 0x2000, 0x4000, 0x8000,
-    0x0100, 0x0200, 0x0010, 0x0020, 0x0040, 0x0080
-};
-static constexpr int kNumXbox = sizeof(kXboxCodes) / sizeof(kXboxCodes[0]);
-
-static const uint16_t kMouseCodes[] = { 0, 1, 2 };
-static constexpr int kNumMouse = 3;
-
-static int find_in_array(const uint16_t* arr, int n, uint16_t code) {
-    for (int i = 0; i < n; i++) if (arr[i] == code) return i;
-    return 0;
-}
-
 // --- Helpers ---
 
 static std::wstring fmt_float(float v, int decimals) {
@@ -368,6 +322,7 @@ void QuickAccessOverlay::show() {
     submenu_open_.store(false, std::memory_order_relaxed);
     dropdown_open_.store(false, std::memory_order_relaxed);
     picker_open_.store(false, std::memory_order_relaxed);
+    picker_from_submenu_.store(false, std::memory_order_relaxed);
     refresh_profiles();
     post_show();
 }
@@ -378,6 +333,7 @@ void QuickAccessOverlay::hide() {
     submenu_open_.store(false, std::memory_order_relaxed);
     dropdown_open_.store(false, std::memory_order_relaxed);
     picker_open_.store(false, std::memory_order_relaxed);
+    picker_from_submenu_.store(false, std::memory_order_relaxed);
     post_hide();
 }
 
@@ -491,48 +447,8 @@ void QuickAccessOverlay::press_x() {
     if (picker_open_.load(std::memory_order_relaxed)) return;
     if (name_entry_.load(std::memory_order_relaxed)) return;
     if (dropdown_open_.load(std::memory_order_relaxed)) return;
-    if (submenu_open_.load(std::memory_order_relaxed)) {
-        // X in submenu: cycle remap backward for radial sector
-        std::lock_guard lock(tiles_mtx_);
-        if (sub_cursor_ >= 0 && sub_cursor_ < static_cast<int>(sub_params_.size())) {
-            auto& p = sub_params_[sub_cursor_];
-            if (p.type == ParamType::Remap) {
-                // Cycle radial key backward
-                int sector = static_cast<int>(p.value);
-                auto ti = static_cast<MainTileId>(submenu_tile_);
-                auto profile = config_.get_profile();
-                auto& t = (ti == LPad) ? profile.left_touchpad : profile.right_touchpad;
-                auto& action = t.radial_keys[sector];
-
-                switch (action.type) {
-                    case config::ActionType::Keyboard: {
-                        int idx = find_in_array(kKeyCodes, kNumKeys, action.code);
-                        idx = (idx - 1 + kNumKeys) % kNumKeys;
-                        action.code = kKeyCodes[idx];
-                        break;
-                    }
-                    case config::ActionType::XboxButton: {
-                        int idx = find_in_array(kXboxCodes, kNumXbox, action.code);
-                        idx = (idx - 1 + kNumXbox) % kNumXbox;
-                        action.code = kXboxCodes[idx];
-                        break;
-                    }
-                    case config::ActionType::MouseButton: {
-                        int idx = find_in_array(kMouseCodes, kNumMouse, action.code);
-                        idx = (idx - 1 + kNumMouse) % kNumMouse;
-                        action.code = kMouseCodes[idx];
-                        break;
-                    }
-                    default: break;
-                }
-                p.value_text = action_display(action);
-                config_.set_profile(profile);
-                mapper_.apply_profile(profile, synth_);
-                invalidate();
-            }
-        }
-        return;
-    }
+    // In the submenu, action bindings are chosen in the picker (opened with A); X is unused.
+    if (submenu_open_.load(std::memory_order_relaxed)) return;
 
     int cur = cursor_.load(std::memory_order_relaxed);
 
@@ -558,35 +474,8 @@ void QuickAccessOverlay::cycle_category(int direction) {
     if (dropdown_open_.load(std::memory_order_relaxed)) return;
     if (picker_open_.load(std::memory_order_relaxed)) { picker_switch_tab(direction); return; }
 
-    // Handle radial remap in submenu
-    if (submenu_open_.load(std::memory_order_relaxed)) {
-        std::lock_guard lock(tiles_mtx_);
-        if (sub_cursor_ >= 0 && sub_cursor_ < static_cast<int>(sub_params_.size())) {
-            auto& p = sub_params_[sub_cursor_];
-            if (p.type == ParamType::Remap) {
-                int sector = static_cast<int>(p.value);
-                auto ti = static_cast<MainTileId>(submenu_tile_);
-                auto profile = config_.get_profile();
-                auto& t = (ti == LPad) ? profile.left_touchpad : profile.right_touchpad;
-                auto& action = t.radial_keys[sector];
-
-                int cat_idx = 0;
-                for (int i = 0; i < kNumCategories; i++)
-                    if (kCategoryOrder[i] == action.type) { cat_idx = i; break; }
-                cat_idx = (cat_idx + direction + kNumCategories) % kNumCategories;
-                action.type = kCategoryOrder[cat_idx];
-                action.code = first_code_for_type(action.type);
-
-                p.value_text = action_display(action);
-                config_.set_profile(profile);
-                mapper_.apply_profile(profile, synth_);
-                invalidate();
-            }
-        }
-        return;
-    }
-
-    // Button remapping now uses the picker (opened with A); LB/RB do nothing on the grid.
+    // Remapping (grid buttons and submenu actions) is done in the picker, which switches
+    // device tabs on LB/RB. Outside the picker, LB/RB do nothing.
 }
 
 // --- Remap helpers ---
@@ -905,52 +794,34 @@ void QuickAccessOverlay::navigate_submenu(int dx, int dy) {
 }
 
 void QuickAccessOverlay::activate_submenu() {
-    std::lock_guard lock(tiles_mtx_);
-    if (sub_cursor_ < 0 || sub_cursor_ >= static_cast<int>(sub_params_.size())) return;
-    auto& p = sub_params_[sub_cursor_];
+    // Read the selected param under the lock, then act (the picker path releases the
+    // lock first so it can post a resize / touch config without holding tiles_mtx_).
+    RemapDest dest = RemapDest::Button;
+    int sector = 0;
+    bool open_picker = false;
+    {
+        std::lock_guard lock(tiles_mtx_);
+        if (sub_cursor_ < 0 || sub_cursor_ >= static_cast<int>(sub_params_.size())) return;
+        auto& p = sub_params_[sub_cursor_];
 
-    if (p.type == ParamType::Button) {
-        cycle_sub_button(sub_cursor_);
-        invalidate();
-    } else if (p.type == ParamType::Toggle) {
-        p.value = (p.value == 0.0f) ? 1.0f : 0.0f;
-        p.value_text = (p.value != 0.0f) ? L"On" : L"Off";
-        apply_sub_param(sub_cursor_);
-        invalidate();
-    } else if (p.type == ParamType::Remap) {
-        // Cycle radial key forward
-        int sector = static_cast<int>(p.value);
-        auto ti = static_cast<MainTileId>(submenu_tile_);
-        auto profile = config_.get_profile();
-        auto& t = (ti == LPad) ? profile.left_touchpad : profile.right_touchpad;
-        auto& action = t.radial_keys[sector];
-
-        switch (action.type) {
-            case config::ActionType::Keyboard: {
-                int idx = find_in_array(kKeyCodes, kNumKeys, action.code);
-                idx = (idx + 1) % kNumKeys;
-                action.code = kKeyCodes[idx];
-                break;
-            }
-            case config::ActionType::XboxButton: {
-                int idx = find_in_array(kXboxCodes, kNumXbox, action.code);
-                idx = (idx + 1) % kNumXbox;
-                action.code = kXboxCodes[idx];
-                break;
-            }
-            case config::ActionType::MouseButton: {
-                int idx = find_in_array(kMouseCodes, kNumMouse, action.code);
-                idx = (idx + 1) % kNumMouse;
-                action.code = kMouseCodes[idx];
-                break;
-            }
-            default: break;
+        if (p.type == ParamType::Button) {
+            cycle_sub_button(sub_cursor_);
+            invalidate();
+            return;
+        } else if (p.type == ParamType::Toggle) {
+            p.value = (p.value == 0.0f) ? 1.0f : 0.0f;
+            p.value_text = (p.value != 0.0f) ? L"On" : L"Off";
+            apply_sub_param(sub_cursor_);
+            invalidate();
+            return;
+        } else if (p.type == ParamType::Remap) {
+            dest = p.remap_dest;
+            sector = p.remap_sector;
+            open_picker = true;
         }
-        p.value_text = action_display(action);
-        config_.set_profile(profile);
-        mapper_.apply_profile(profile, synth_);
-        invalidate();
     }
+    if (open_picker)
+        open_picker_submenu(dest, submenu_tile_, sector);
 }
 
 void QuickAccessOverlay::build_sub_params(int main_tile, const config::Profile& profile) {
@@ -968,6 +839,12 @@ void QuickAccessOverlay::build_sub_params(int main_tile, const config::Profile& 
     };
     auto add_toggle = [&](const wchar_t* label, bool val, const wchar_t* desc) {
         sub_params_.push_back({label, val ? L"On" : L"Off", ParamType::Toggle, val ? 1.0f : 0.0f, 0, 1, 1});
+        sub_descs_.push_back(desc);
+    };
+    // An action binding, edited via the same picker as the main-menu buttons.
+    auto add_remap = [&](const std::wstring& label, const config::ButtonAction& act,
+                         RemapDest dest, int sector, const wchar_t* desc) {
+        sub_params_.push_back({label, action_display(act), ParamType::Remap, 0, 0, 0, 0, dest, sector});
         sub_descs_.push_back(desc);
     };
 
@@ -1021,16 +898,15 @@ void QuickAccessOverlay::build_sub_params(int main_tile, const config::Profile& 
                 add_button(L"Acceleration", accel_name(t.acceleration), L"Off/Normal/Strong acceleration curve.");
                 add_toggle(L"Invert X", t.invert_x, L"Invert horizontal cursor.");
                 add_toggle(L"Invert Y", t.invert_y, L"Invert vertical cursor.");
-                // click_action as remap
-                add_button(L"Click Action", action_display(t.click_action).c_str(),
-                    L"Action on touchpad click.");
+                add_remap(L"Click Action", t.click_action, RemapDest::ClickAction, 0,
+                    L"Action on touchpad click. Press A to choose a binding.");
             } else if (t.mode == config::TouchpadMode::Mouse) {
                 add_slider(L"Sensitivity", t.sensitivity, 0.1f, 5.0f, 0.1f, L"Cursor speed multiplier.");
                 add_button(L"Acceleration", accel_name(t.acceleration), L"Off/Normal/Strong acceleration curve.");
                 add_toggle(L"Invert X", t.invert_x, L"Invert horizontal cursor.");
                 add_toggle(L"Invert Y", t.invert_y, L"Invert vertical cursor.");
-                add_button(L"Click Action", action_display(t.click_action).c_str(),
-                    L"Action on touchpad click.");
+                add_remap(L"Click Action", t.click_action, RemapDest::ClickAction, 0,
+                    L"Action on touchpad click. Press A to choose a binding.");
             } else if (t.mode == config::TouchpadMode::Wasd || t.mode == config::TouchpadMode::Arrows) {
                 add_slider(L"Overlap", t.overlap, 0.0f, 1.0f, 0.05f,
                     L"Diagonal overlap. 0 = strict 4-way, 1 = full 8-way diagonal.");
@@ -1042,9 +918,8 @@ void QuickAccessOverlay::build_sub_params(int main_tile, const config::Profile& 
                 const wchar_t* arrows[] = {L"\u2191",L"\u2197",L"\u2192",L"\u2198",L"\u2193",L"\u2199",L"\u2190",L"\u2196"};
                 for (int i = 0; i < 8; i++) {
                     std::wstring lbl = std::wstring(arrows[i]) + L" Sector " + std::to_wstring(i + 1);
-                    sub_params_.push_back({lbl, action_display(t.radial_keys[i]),
-                        ParamType::Remap, static_cast<float>(i), 0, 0, 0});
-                    sub_descs_.push_back(L"Radial sector action. Use LB/RB for category, A/X to cycle.");
+                    add_remap(lbl, t.radial_keys[i], RemapDest::RadialKey, i,
+                        L"Radial sector action. Press A to choose a binding.");
                 }
             }
             break;
@@ -1132,19 +1007,6 @@ void QuickAccessOverlay::cycle_sub_button(int param_idx) {
         auto& t = (ti == LPad) ? profile.left_touchpad : profile.right_touchpad;
         t.acceleration = next_accel(t.acceleration);
         p.value_text = accel_name(t.acceleration);
-    } else if (p.label == L"Click Action") {
-        auto& t = (ti == LPad) ? profile.left_touchpad : profile.right_touchpad;
-        // Cycle through: Mouse L -> Mouse R -> Mouse M -> None -> Mouse L
-        if (t.click_action.type == config::ActionType::MouseButton) {
-            if (t.click_action.code < 2) {
-                t.click_action.code++;
-            } else {
-                t.click_action = {config::ActionType::None, 0};
-            }
-        } else {
-            t.click_action = {config::ActionType::MouseButton, 0};
-        }
-        p.value_text = action_display(t.click_action);
     }
 
     config_.set_profile(profile);
@@ -1588,9 +1450,7 @@ void QuickAccessOverlay::draw_action_bar() {
         }
 
         if (pt == ParamType::Remap) {
-            draw_pill(L"LB", 2); draw_pill(L"RB", 2); draw_text_hint(L"Category", 90);
-            draw_glyph(L'A'); draw_text_hint(L"Next", 50);
-            draw_glyph(L'X'); draw_text_hint(L"Prev", 50);
+            draw_glyph(L'A'); draw_text_hint(L"Choose", 80);
         } else if (pt == ParamType::Slider) {
             // Arrows for adjust
             const wchar_t* arrows = L"\u25C4\u25BA";
@@ -1654,9 +1514,16 @@ void QuickAccessOverlay::draw_description() {
     bool is_submenu = submenu_open_.load(std::memory_order_relaxed);
 
     if (picker_open_.load(std::memory_order_relaxed)) {
-        int bidv = picker_bid_.load(std::memory_order_relaxed);
+        auto dest = static_cast<RemapDest>(picker_dest_.load(std::memory_order_relaxed));
         desc = L"Choose what ";
-        desc += (bidv >= 0) ? button_id_name(static_cast<config::ButtonId>(bidv)) : L"the button";
+        if (dest == RemapDest::RadialKey) {
+            desc += L"radial sector " + std::to_wstring(picker_sector_.load(std::memory_order_relaxed) + 1);
+        } else if (dest == RemapDest::ClickAction) {
+            desc += L"the touchpad click";
+        } else {
+            int bidv = picker_bid_.load(std::memory_order_relaxed);
+            desc += (bidv >= 0) ? button_id_name(static_cast<config::ButtonId>(bidv)) : L"the button";
+        }
         desc += L" sends.   LB / RB switch device   -   A binds   -   Y clears   -   B cancels.";
     } else if (is_submenu) {
         std::lock_guard lock(tiles_mtx_);
@@ -2050,8 +1917,34 @@ void QuickAccessOverlay::open_picker() {
     if (bid == config::ButtonId::Count) return;
 
     auto profile = config_.get_profile();
-    const auto& action = profile.buttons[static_cast<int>(bid)];
+    picker_dest_.store(static_cast<int>(RemapDest::Button), std::memory_order_relaxed);
+    picker_bid_.store(static_cast<int>(bid), std::memory_order_relaxed);
+    picker_from_submenu_.store(false, std::memory_order_relaxed);
+    open_picker_for(profile.buttons[static_cast<int>(bid)]);
+}
 
+void QuickAccessOverlay::open_picker_submenu(RemapDest dest, int pad_tile, int sector) {
+    auto profile = config_.get_profile();
+    auto ti = static_cast<MainTileId>(pad_tile);
+    const auto& t = (ti == LPad) ? profile.left_touchpad : profile.right_touchpad;
+    config::ButtonAction current =
+        (dest == RemapDest::ClickAction) ? t.click_action : t.radial_keys[sector];
+
+    picker_dest_.store(static_cast<int>(dest), std::memory_order_relaxed);
+    picker_pad_.store(pad_tile, std::memory_order_relaxed);
+    picker_sector_.store(sector, std::memory_order_relaxed);
+    picker_from_submenu_.store(true, std::memory_order_relaxed);
+
+    // Collapse the submenu panel so the picker renders centered at the base width;
+    // close_picker() reopens it. Input handlers check picker_open_ before submenu_open_,
+    // so the transient submenu_open_=false does not affect navigation.
+    submenu_open_.store(false, std::memory_order_relaxed);
+    PostMessage(hwnd(), WM_OVR_RESIZE, kTotalW, 0);
+
+    open_picker_for(current);
+}
+
+void QuickAccessOverlay::open_picker_for(const config::ButtonAction& action) {
     int tab = 1;  // default landing on the keyboard
     switch (action.type) {
         case config::ActionType::MouseButton:
@@ -2069,7 +1962,6 @@ void QuickAccessOverlay::open_picker() {
         }
     }
 
-    picker_bid_.store(static_cast<int>(bid), std::memory_order_relaxed);
     picker_tab_.store(tab, std::memory_order_relaxed);
     picker_cursor_[tab].store(idx, std::memory_order_relaxed);
     picker_bound_tab_.store(boundTab, std::memory_order_relaxed);
@@ -2114,30 +2006,41 @@ void QuickAccessOverlay::picker_switch_tab(int direction) {
     invalidate();
 }
 
-void QuickAccessOverlay::picker_bind_current() {
-    int bid = picker_bid_.load(std::memory_order_relaxed);
-    if (bid < 0) { close_picker(); return; }
-    int tab = picker_tab_.load(std::memory_order_relaxed);
-    const auto& ts = picker_targets_[tab];
-    int cur = picker_cursor_[tab].load(std::memory_order_relaxed);
-    if (cur < 0 || cur >= static_cast<int>(ts.size())) { close_picker(); return; }
-
+// Write an action to whatever destination the picker is currently bound to.
+void QuickAccessOverlay::picker_write(const config::ButtonAction& a) {
+    auto dest = static_cast<RemapDest>(picker_dest_.load(std::memory_order_relaxed));
     auto profile = config_.get_profile();
-    profile.buttons[bid] = ts[cur].action;
+    if (dest == RemapDest::Button) {
+        int bid = picker_bid_.load(std::memory_order_relaxed);
+        if (bid < 0) return;
+        profile.buttons[bid] = a;
+    } else {
+        auto ti = static_cast<MainTileId>(picker_pad_.load(std::memory_order_relaxed));
+        auto& t = (ti == LPad) ? profile.left_touchpad : profile.right_touchpad;
+        if (dest == RemapDest::RadialKey) {
+            int s = picker_sector_.load(std::memory_order_relaxed);
+            if (s < 0 || s >= static_cast<int>(t.radial_keys.size())) return;
+            t.radial_keys[s] = a;
+        } else {
+            t.click_action = a;
+        }
+    }
     config_.set_profile(profile);
     mapper_.apply_profile(profile, synth_);
     refresh_all(profile);
+}
+
+void QuickAccessOverlay::picker_bind_current() {
+    int tab = picker_tab_.load(std::memory_order_relaxed);
+    const auto& ts = picker_targets_[tab];
+    int cur = picker_cursor_[tab].load(std::memory_order_relaxed);
+    if (cur >= 0 && cur < static_cast<int>(ts.size()))
+        picker_write(ts[cur].action);
     close_picker();
 }
 
 void QuickAccessOverlay::picker_set_none() {
-    int bid = picker_bid_.load(std::memory_order_relaxed);
-    if (bid < 0) { close_picker(); return; }
-    auto profile = config_.get_profile();
-    profile.buttons[bid] = { config::ActionType::None, 0 };
-    config_.set_profile(profile);
-    mapper_.apply_profile(profile, synth_);
-    refresh_all(profile);
+    picker_write({ config::ActionType::None, 0 });
     close_picker();
 }
 
@@ -2148,6 +2051,19 @@ void QuickAccessOverlay::press_y() {
 
 void QuickAccessOverlay::close_picker() {
     picker_open_.store(false, std::memory_order_relaxed);
+    if (picker_from_submenu_.exchange(false, std::memory_order_relaxed)) {
+        // Rebuild the params so the new binding's value text shows, then reopen the
+        // submenu panel (widen the window back to the submenu width).
+        auto profile = config_.get_profile();
+        {
+            std::lock_guard lock(tiles_mtx_);
+            build_sub_params(submenu_tile_, profile);
+            if (sub_cursor_ >= static_cast<int>(sub_params_.size()))
+                sub_cursor_ = sub_params_.empty() ? 0 : static_cast<int>(sub_params_.size()) - 1;
+        }
+        submenu_open_.store(true, std::memory_order_relaxed);
+        PostMessage(hwnd(), WM_OVR_RESIZE, kTotalW + kSubmenuW, 0);
+    }
     invalidate();
 }
 
