@@ -8,9 +8,12 @@
 namespace windeck::mapper {
 
 // Maps Neptune 16-bit trigger to Xbox 8-bit trigger with threshold dead zone.
-// Optionally fires a button action when trigger crosses a threshold.
+// Optionally holds a key or mouse button while the trigger is past a threshold.
 class TriggerMapper {
 public:
+    // `source` is the hold set the optional key or mouse button goes to.
+    explicit TriggerMapper(windeck::output::HoldSource source) : source_(source) {}
+
     void apply_config(const config::TriggerConfig& cfg) {
         threshold_ = cfg.threshold;
         has_button_ = cfg.has_button;
@@ -26,11 +29,11 @@ public:
     void release_all(windeck::output::SyntheticInput& synth);
 
 private:
+    windeck::output::HoldSource source_;
     float threshold_ = 0.02f;
     bool has_button_ = false;
     float button_threshold_ = 0.5f;
     config::ButtonAction button_action_{};
-    bool button_pressed_ = false;
 };
 
 } // namespace windeck::mapper

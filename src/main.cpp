@@ -143,8 +143,6 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                 // Steam button -> open Quick Access Menu
                 if (result.sys_events.steam_pressed) {
                     mapper.release_all(synth);
-                    synth.release_all();
-                    synth.flush();
                     XUSB_REPORT zero{};
                     xbox.update(zero);
 
@@ -172,8 +170,6 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
             if (error_count >= kMaxConsecutiveErrors) {
                 spdlog::error("Too many consecutive HID errors, attempting reconnect...");
                 mapper.release_all(synth);
-                synth.release_all();
-                synth.flush();
                 device.close();
                 std::this_thread::sleep_for(std::chrono::seconds(1));
                 if (device.open()) {
@@ -193,7 +189,6 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
     if (save_thread.joinable()) save_thread.join();
 
     mapper.release_all(synth);
-    synth.release_all();
 
     // The input thread owns the HID device, so it always restores lizard mode when
     // it stops — on every shutdown path (Ctrl+C, window close, logoff, shutdown,

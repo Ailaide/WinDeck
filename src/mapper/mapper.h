@@ -45,6 +45,8 @@ public:
     // Tick inertia + flush under one lock.
     void tick_and_flush(windeck::output::SyntheticInput& synth);
 
+    // Forced release (menu open, reconnect, shutdown): every mapper and every
+    // hold set is cleared and the releases are sent, all under the exclusive lock.
     void release_all(windeck::output::SyntheticInput& synth);
 
 private:
@@ -52,14 +54,17 @@ private:
                            windeck::output::SyntheticInput& synth);
     void release_all_unlocked(windeck::output::SyntheticInput& synth);
     mutable std::shared_mutex mutex_;
+    using HoldSource = windeck::output::HoldSource;
     ButtonMapper   button_mapper_;
-    StickMapper    left_stick_;
-    StickMapper    right_stick_;
-    TriggerMapper  left_trigger_;
-    TriggerMapper  right_trigger_;
+    StickMapper    left_stick_{HoldSource::LeftStick};
+    StickMapper    right_stick_{HoldSource::RightStick};
+    TriggerMapper  left_trigger_{HoldSource::LeftTrigger};
+    TriggerMapper  right_trigger_{HoldSource::RightTrigger};
     DpadMapper     dpad_;
-    TouchpadMapper left_touchpad_;
-    TouchpadMapper right_touchpad_;
+    TouchpadMapper left_touchpad_{HoldSource::LeftPadDirectional, HoldSource::LeftPadClick,
+                                  HoldSource::LeftPadRadial};
+    TouchpadMapper right_touchpad_{HoldSource::RightPadDirectional, HoldSource::RightPadClick,
+                                   HoldSource::RightPadRadial};
     GyroMapper     gyro_;
 };
 

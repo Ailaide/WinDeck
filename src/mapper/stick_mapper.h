@@ -10,6 +10,9 @@ namespace windeck::mapper {
 
 class StickMapper {
 public:
+    // `source` is the hold set its WASD/Arrows keys go to.
+    explicit StickMapper(windeck::output::HoldSource source) : directional_(source) {}
+
     void apply_config(const config::StickConfig& cfg);
 
     void map(int16_t raw_x, int16_t raw_y,

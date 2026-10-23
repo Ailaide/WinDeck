@@ -217,13 +217,13 @@ void TouchpadMapper::update(int16_t pad_x, int16_t pad_y, uint16_t pressure,
         if (click_now && !click_held_) {
             if (mode_ == config::TouchpadMode::TrackpadInertia ||
                 mode_ == config::TouchpadMode::Mouse) {
-                emit_action(click_action_, true, synth);
+                set_click_held(true, synth);
             }
             click_haptic();
         } else if (!click_now && click_held_) {
             if (mode_ == config::TouchpadMode::TrackpadInertia ||
                 mode_ == config::TouchpadMode::Mouse) {
-                emit_action(click_action_, false, synth);
+                set_click_held(false, synth);
             }
             click_haptic();
         }
@@ -484,28 +484,18 @@ void TouchpadMapper::release_all(windeck::output::SyntheticInput& synth) {
     touch_timer_.reset();
     reset_mouse_edge_state();
     mouse_edge_requires_rearm_ = false;
-    if (click_held_) {
-        emit_action(click_action_, false, synth);
-        click_held_ = false;
-    }
-    if (mode_ == config::TouchpadMode::RadialMenu) {
-        radial_menu_.release_all(synth);
-        if (overlay_) overlay_->hide(haptic_side_);
+    set_click_held(false, synth);
+    click_held_ = false;
+    radial_menu_.release_all(synth);
+    if (mode_ == config::TouchpadMode::RadialMenu && overlay_) {
+        overlay_->hide(haptic_side_);
     }
 }
 
-void TouchpadMapper::emit_action(const config::ButtonAction& action, bool pressed,
-                                   windeck::output::SyntheticInput& synth) {
-    switch (action.type) {
-        case config::ActionType::MouseButton:
-            synth.mouse_set(static_cast<uint8_t>(action.code), pressed);
-            break;
-        case config::ActionType::Keyboard:
-            synth.key_set(action.code, pressed);
-            break;
-        default:
-            break;
-    }
+void TouchpadMapper::set_click_held(bool held, windeck::output::SyntheticInput& synth) {
+    windeck::output::HoldSet holds;
+    if (held) holds.add(click_action_);
+    synth.set_holds(click_source_, holds);
 }
 
 void TouchpadMapper::click_haptic() {

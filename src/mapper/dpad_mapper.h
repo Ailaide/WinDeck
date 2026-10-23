@@ -14,6 +14,8 @@ namespace windeck::mapper {
 // Maps Neptune D-Pad to Xbox D-Pad / WASD / arrows.
 class DpadMapper {
 public:
+    DpadMapper() : directional_(windeck::output::HoldSource::Dpad) {}
+
     void apply_config(const config::DpadConfig& cfg);
 
     // Returns Xbox wButtons bits for D-Pad (mode=dpad),

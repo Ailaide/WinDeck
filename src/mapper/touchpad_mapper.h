@@ -17,6 +17,13 @@ namespace windeck::mapper {
 // Maps Neptune touchpad to trackpad/mouse/wasd/arrows/dpad/scroll/disabled.
 class TouchpadMapper {
 public:
+    // Hold sets for this pad's WASD/Arrows keys, its click action and its radial
+    // menu. They update independently, so each has its own.
+    TouchpadMapper(windeck::output::HoldSource directional,
+                   windeck::output::HoldSource click,
+                   windeck::output::HoldSource radial)
+        : directional_(directional), radial_menu_(radial), click_source_(click) {}
+
     void set_name(const char* name) { name_ = name; }
     // Set reference to Neptune device for haptic feedback on click.
     void set_haptic_device(windeck::neptune::NeptuneDevice* device, uint8_t side) {
@@ -89,6 +96,7 @@ private:
     modes::DirectionalMode directional_;
     modes::Inertia inertia_;
     modes::RadialMenuMode  radial_menu_;
+    windeck::output::HoldSource click_source_;
     std::array<config::ButtonAction, 8> radial_keys_{};
     windeck::overlay::RadialOverlay* overlay_ = nullptr;
     const char* name_ = "pad";
@@ -97,8 +105,8 @@ private:
 
     void click_haptic();
     void edge_entry_haptic();
-    void emit_action(const config::ButtonAction& action, bool pressed,
-                      windeck::output::SyntheticInput& synth);
+    // While the click is held, its action is the click source's whole set.
+    void set_click_held(bool held, windeck::output::SyntheticInput& synth);
     void reset_mouse_edge_state();
 };
 

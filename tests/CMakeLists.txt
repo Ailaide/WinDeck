@@ -5,6 +5,7 @@ add_executable(windeck_tests
     stick_mapper_test.cpp
     inertia_test.cpp
     profile_json_test.cpp
+    hold_ownership_test.cpp
 )
 
 target_link_libraries(windeck_tests PRIVATE

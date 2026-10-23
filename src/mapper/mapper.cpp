@@ -89,7 +89,7 @@ MapResult Mapper::map_and_flush(const neptune::InputReport& input,
     MapResult result = map_unlocked(input, synth);
     left_touchpad_.tick_inertia(synth);
     right_touchpad_.tick_inertia(synth);
-    synth.reconcile_holds();   // resolve WASD/Arrows holds across all sources
+    synth.reconcile_holds();   // one press/release per key and mouse button across all sources
     synth.flush();
     return result;
 }
@@ -108,11 +108,16 @@ void Mapper::tick_and_flush(windeck::output::SyntheticInput& synth) {
 }
 
 void Mapper::release_all(windeck::output::SyntheticInput& synth) {
+    // The whole forced release, sending included, happens under the exclusive
+    // lock, so a profile change from another thread never touches the hold sets
+    // at the same time.
     std::unique_lock lock(mutex_);
     release_all_unlocked(synth);
+    synth.release_all();
 }
 
 void Mapper::release_all_unlocked(windeck::output::SyntheticInput& synth) {
+    button_mapper_.release_all(synth);
     left_stick_.release_all(synth);
     right_stick_.release_all(synth);
     dpad_.release_all(synth);
@@ -120,6 +125,8 @@ void Mapper::release_all_unlocked(windeck::output::SyntheticInput& synth) {
     right_touchpad_.release_all(synth);
     left_trigger_.release_all(synth);
     right_trigger_.release_all(synth);
+    // Every source's set is now empty: queue the releases (sent on the next flush).
+    synth.reconcile_holds();
 }
 
 } // namespace windeck::mapper

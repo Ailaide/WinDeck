@@ -11,6 +11,9 @@ namespace windeck::modes {
 //   0=12h  1=1:30h  2=3h  3=4:30h  4=6h  5=7:30h  6=9h  7=10:30h
 class RadialMenuMode {
 public:
+    // `source` is the hold set this menu writes; each touchpad has its own.
+    explicit RadialMenuMode(windeck::output::HoldSource source) : source_(source) {}
+
     // Set sector actions (call at profile load).
     void set_keys(const std::array<config::ButtonAction, 8>& keys);
 
@@ -27,10 +30,9 @@ public:
     static int detect_sector(float x, float y);
 
 private:
+    windeck::output::HoldSource source_;
     std::array<config::ButtonAction, 8> keys_{};
     int active_sector_ = -1;
-    void emit(const config::ButtonAction& a, bool pressed,
-              windeck::output::SyntheticInput& synth);
 };
 
 } // namespace windeck::modes

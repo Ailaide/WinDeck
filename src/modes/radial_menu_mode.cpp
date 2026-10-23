@@ -24,27 +24,18 @@ int RadialMenuMode::detect_sector(float x, float y) {
 int RadialMenuMode::update(float x, float y, windeck::output::SyntheticInput& synth) {
     int s = detect_sector(x, y);
     if (s != active_sector_) {
-        if (active_sector_ >= 0) emit(keys_[active_sector_], false, synth);
-        if (s >= 0)              emit(keys_[s],              true,  synth);
+        // The hovered sector's key or mouse button is this source's whole set.
+        windeck::output::HoldSet holds;
+        if (s >= 0) holds.add(keys_[s]);
+        synth.set_holds(source_, holds);
         active_sector_ = s;
     }
     return active_sector_;
 }
 
 void RadialMenuMode::release_all(windeck::output::SyntheticInput& synth) {
-    if (active_sector_ >= 0) {
-        emit(keys_[active_sector_], false, synth);
-        active_sector_ = -1;
-    }
-}
-
-void RadialMenuMode::emit(const config::ButtonAction& a, bool pressed,
-                           windeck::output::SyntheticInput& synth) {
-    switch (a.type) {
-        case config::ActionType::Keyboard:    synth.key_set(a.code, pressed);                            break;
-        case config::ActionType::MouseButton: synth.mouse_set(static_cast<uint8_t>(a.code), pressed);   break;
-        default: break;
-    }
+    synth.clear_holds(source_);
+    active_sector_ = -1;
 }
 
 } // namespace windeck::modes

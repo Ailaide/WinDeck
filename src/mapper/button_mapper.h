@@ -23,10 +23,14 @@ public:
     // Apply button mapping from profile.
     void set_config(const std::array<config::ButtonAction, static_cast<size_t>(config::ButtonId::Count)>& actions);
 
-    // Map Neptune buttons. Returns Xbox wButtons, emits keyboard/mouse via synth.
+    // Map Neptune buttons. Returns Xbox wButtons; keyboard and mouse-button
+    // bindings become the Buttons hold set, wheel bindings one tick per press.
     USHORT map(uint32_t neptune_buttons, uint32_t neptune_buttons_ext,
                SystemButtonEvents& sys_events,
                windeck::output::SyntheticInput& synth);
+
+    // Hold nothing any more (profile change, menu open, shutdown).
+    void release_all(windeck::output::SyntheticInput& synth);
 
 private:
     // Current button actions

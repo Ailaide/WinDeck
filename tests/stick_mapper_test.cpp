@@ -9,6 +9,7 @@ using windeck::config::ResponseCurve;
 using windeck::config::StickConfig;
 using windeck::config::StickMode;
 using windeck::mapper::StickMapper;
+using windeck::output::HoldSource;
 using windeck::output::SyntheticInput;
 
 // The keyboard and mouse modes queue input in SyntheticInput. These tests never
@@ -22,7 +23,7 @@ struct StickOut {
 };
 
 StickOut map_once(const StickConfig& cfg, int16_t raw_x, int16_t raw_y) {
-    StickMapper mapper;
+    StickMapper mapper{HoldSource::LeftStick};
     SyntheticInput synth;
     mapper.apply_config(cfg);
     StickOut out;
@@ -85,7 +86,7 @@ TEST_CASE("Keyboard and mouse modes keep the virtual stick centered", "[stick_ma
 }
 
 TEST_CASE("Reconfiguring the mapper takes effect on the next frame", "[stick_mapper]") {
-    StickMapper mapper;
+    StickMapper mapper{HoldSource::LeftStick};
     SyntheticInput synth;
     int16_t x = 0;
     int16_t y = 0;

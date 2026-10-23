@@ -14,6 +14,9 @@ namespace windeck::modes {
 //   1.0 = maximum overlap, diagonals trigger easily
 class DirectionalMode {
 public:
+    // `source` is the hold set this mode writes; each control has its own.
+    explicit DirectionalMode(windeck::output::HoldSource source) : source_(source) {}
+
     // Set the 4 VK codes for up/down/left/right
     void set_keys_wasd();   // W=0x57, A=0x41, S=0x53, D=0x44
     void set_keys_arrows(); // VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT
@@ -28,20 +31,16 @@ public:
     void update_discrete(bool up, bool down, bool left, bool right,
                           windeck::output::SyntheticInput& synth);
 
-    // Release all held keys (call on mode switch).
+    // Hold nothing any more (finger lifted, mode switch, profile change).
     void release_all(windeck::output::SyntheticInput& synth);
 
 private:
+    windeck::output::HoldSource source_;
     uint16_t key_up_    = 0x57; // W
     uint16_t key_down_  = 0x53; // S
     uint16_t key_left_  = 0x41; // A
     uint16_t key_right_ = 0x44; // D
     float overlap_ = 0.0f;
-
-    bool held_up_ = false;
-    bool held_down_ = false;
-    bool held_left_ = false;
-    bool held_right_ = false;
 
     void apply(bool up, bool down, bool left, bool right,
                windeck::output::SyntheticInput& synth);
