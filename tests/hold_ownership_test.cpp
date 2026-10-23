@@ -375,17 +375,19 @@ TEST_CASE("The radial menu holds only the hovered sector's key", "[holds][mapper
     CHECK_FALSE(synth.key_down('3'));
 }
 
-TEST_CASE("The trigger's optional key is shared with a button", "[holds][mappers]") {
+TEST_CASE("A trigger binding's key is shared with a button", "[holds][mappers]") {
     using namespace windeck;
     Capture cap;
     SyntheticInput synth(cap.sender());
 
     mapper::TriggerMapper trigger{HoldSource::RightTrigger};
     config::TriggerConfig tc;
-    tc.has_button = true;
-    tc.button_threshold = 0.5f;
-    tc.button_action = {ActionType::Keyboard, 'E'};
+    tc.mode = config::TriggerMode::Buttons;
+    tc.bindings[0] = {{ActionType::Keyboard, 'E'}, 0.5f, config::BindingMode::Hold,
+                      config::ClickStrength::Low};
     trigger.apply_config(tc);
+    const auto t0 = mapper::TriggerMapper::Clock::time_point{};
+    trigger.update(0, t0, synth);   // a released trigger arms it
 
     mapper::ButtonMapper buttons;
     auto actions = no_bindings();
@@ -393,13 +395,13 @@ TEST_CASE("The trigger's optional key is shared with a button", "[holds][mappers
     buttons.set_config(actions);
 
     map_buttons(buttons, neptune::btn::kX, synth);
-    trigger.map(32767, synth);
+    trigger.update(32767, t0, synth);
     step(synth);
     REQUIRE(synth.key_down('E'));
 
     // The trigger eases off; the button still holds E.
     map_buttons(buttons, neptune::btn::kX, synth);
-    trigger.map(0, synth);
+    trigger.update(0, t0, synth);
     step(synth);
     CHECK(synth.key_down('E'));
     CHECK(cap.count_key('E', true) == 0);
@@ -422,5 +424,33 @@ TEST_CASE("A wheel binding ticks once per press, not while held", "[holds][mappe
     map_buttons(buttons, neptune::btn::kY, synth);  // still held
     step(synth);
 
+    CHECK(cap.count_mouse(MOUSEEVENTF_WHEEL) == 1);
+}
+
+TEST_CASE("After the menu, a button held through it is no press; a fresh one is", "[holds][mappers]") {
+    using namespace windeck;
+    Capture cap;
+    SyntheticInput synth(cap.sender());
+
+    mapper::ButtonMapper buttons;
+    auto actions = no_bindings();
+    bind(actions, ButtonId::Y, {ActionType::MouseScroll, 1});
+    buttons.set_config(actions);
+    map_buttons(buttons, 0, synth);                 // first frame: nothing held
+    step(synth);
+
+    // The menu opens (forced release) and resyncs from each report it takes:
+    // Y is held in its last one. The first report after the menu still holds Y.
+    buttons.release_all(synth);
+    buttons.resync(neptune::btn::kY, 0);
+    map_buttons(buttons, neptune::btn::kY, synth);
+    step(synth);
+    CHECK(cap.count_mouse(MOUSEEVENTF_WHEEL) == 0);
+
+    // Y is let go inside the menu and pressed in the first report after it.
+    buttons.release_all(synth);
+    buttons.resync(0, 0);
+    map_buttons(buttons, neptune::btn::kY, synth);
+    step(synth);
     CHECK(cap.count_mouse(MOUSEEVENTF_WHEEL) == 1);
 }

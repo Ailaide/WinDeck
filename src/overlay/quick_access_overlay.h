@@ -5,6 +5,7 @@
 #include "mapper/mapper.h"
 #include "output/synthetic_input.h"
 #include "output/touch_keyboard.h"
+#include "overlay/name_entry_queue.h"
 #include <array>
 #include <string>
 #include <atomic>
@@ -55,7 +56,7 @@ public:
     static constexpr int kProfileGap  = 12;
 
     // Item zones (cursor indices)
-    static constexpr int kTopTiles    = 2;   // LB, RB
+    static constexpr int kTopTiles    = 4;   // LT, LB, RB, RT
     static constexpr int kMiniRow1    = 4;   // A, B, X, Y
     static constexpr int kMiniRow2    = 4;   // Start, Back, LSC, RSC
     static constexpr int kBottomTiles = 4;   // L4, L5, R4, R5
@@ -109,6 +110,10 @@ public:
     void close_dropdown();
     bool is_name_entry() const { return name_entry_.load(std::memory_order_relaxed); }
     void cancel_name_entry();
+    // Input thread, every loop pass: apply a name typed or cancelled on the
+    // touch keyboard (decided on the overlay thread), so every profile change
+    // happens on the input thread.
+    void process_name_entry();
     // Profile name entry shows the touch keyboard and hides it when it ends.
     void set_touch_keyboard(windeck::output::TouchKeyboard* keyboard) { touch_kbd_ = keyboard; }
     void update_tiles(const config::Profile& profile);
@@ -122,8 +127,9 @@ private:
     enum class ParamType { Slider, Button, Toggle, Remap };
 
     // Where a picker binding is written. Button = a grid button (buttons[bid]);
-    // RadialKey/ClickAction = a touchpad action edited from the submenu.
-    enum class RemapDest { Button, RadialKey, ClickAction };
+    // RadialKey/ClickAction = a touchpad action edited from the submenu;
+    // TriggerBinding = binding A, B or C of a trigger, edited from its submenu.
+    enum class RemapDest { Button, RadialKey, ClickAction, TriggerBinding };
 
     struct TileData {
         std::wstring label;
@@ -139,7 +145,9 @@ private:
         float        max_val;
         float        step;
         RemapDest    remap_dest   = RemapDest::Button;  // for ParamType::Remap
-        int          remap_sector = 0;                  // for RadialKey dest
+        int          remap_sector = 0;                  // RadialKey: sector; TriggerBinding: binding
+        int          trigger_binding = -1;              // trigger rows: binding 0..2 (A, B, C)
+        bool         percent = false;                   // slider shown as a whole percentage
     };
 
     // A selectable target in the remap picker (a key, mouse button, or Xbox button).
@@ -170,7 +178,9 @@ private:
     // Remap picker (Mouse / Keyboard / Xbox tabs)
     void build_picker_targets();
     void open_picker();                  // grid button under the cursor
-    void open_picker_submenu(RemapDest dest, int pad_tile, int sector);  // touchpad action from submenu
+    // A submenu action: `target` is the touchpad tile (MainTileId) or, for
+    // TriggerBinding, the trigger side (0 = left); `index` the sector or binding.
+    void open_picker_submenu(RemapDest dest, int target, int index);
     void open_picker_for(const config::ButtonAction& current);           // shared: seed tab/cursor, open
     void picker_write(const config::ButtonAction& action);               // write to the active destination
     void picker_navigate(int dx, int dy);
@@ -191,8 +201,11 @@ private:
 
     // Submenu
     void enter_submenu();
+    void enter_trigger_submenu(int side);
     void exit_submenu();
     void build_sub_params(int main_tile, const config::Profile& profile);
+    void build_trigger_params(int side, const config::Profile& profile);
+    void rebuild_submenu(const config::Profile& profile);   // whichever submenu is open
     void apply_sub_param(int param_idx);
     void cycle_sub_button(int param_idx);
 
@@ -206,15 +219,17 @@ private:
 
     // Profile name entry (New)
     void begin_name_entry();
-    void end_name_entry(bool commit);
+    void end_name_entry(bool commit, const std::wstring& name);
     void name_append(wchar_t c);
     void name_backspace();
     void draw_name_entry(float y);
     static LRESULT CALLBACK kbd_hook_proc(int code, WPARAM wp, LPARAM lp);
 
     // Remap helpers
-    config::ButtonId button_id_for_cursor(int cursor) const;
+    config::ButtonId button_id_for_cursor(int cursor) const;   // Count for trigger tiles
+    int trigger_side_for_cursor(int cursor) const;              // 0 = LT, 1 = RT, -1 otherwise
     std::wstring action_display(const config::ButtonAction& action) const;
+    std::wstring trigger_display(const config::TriggerConfig& trigger) const;
 
     // Refresh
     void refresh_all(const config::Profile& profile);
@@ -232,6 +247,7 @@ private:
     std::atomic<int>  picker_bid_{-1};                 // ButtonId being remapped (Button dest)
     std::atomic<int>  picker_dest_{0};                 // RemapDest of the active binding
     std::atomic<int>  picker_pad_{0};                  // MainTileId (LPad/RPad) for touchpad dests
+    std::atomic<int>  picker_side_{0};                 // trigger side for TriggerBinding (0 = left)
     std::atomic<int>  picker_sector_{0};               // radial sector (RadialKey dest)
     std::atomic<bool> picker_from_submenu_{false};     // reopen the submenu when the picker closes
     std::atomic<int>  picker_bound_tab_{-1};           // tab/idx of the current binding
@@ -241,12 +257,16 @@ private:
     mutable std::mutex tiles_mtx_;
     std::array<TileData, kTiles> tiles_;
 
-    // Remap display cache (for all remap tiles: top + mini1 + mini2 + bottom = 16)
+    // Remap display cache (for all remap tiles: top + mini1 + mini2 + bottom = 16;
+    // the top row's outer two are the triggers, the other 14 are buttons)
     static constexpr int kRemapTiles = kTopTiles + kMiniRow1 + kMiniRow2 + kBottomTiles; // 16
     std::array<std::wstring, kRemapTiles> remap_display_;  // cached display strings
 
-    // Submenu state
+    // Submenu state (guarded by tiles_mtx_): a main tile's or a trigger's
     int submenu_tile_ = 0;
+    bool submenu_trigger_ = false;   // true: the submenu belongs to trigger submenu_side_
+    int submenu_side_ = 0;           // 0 = LT, 1 = RT
+    std::wstring sub_header_;        // trigger submenu header
     int sub_cursor_ = 0;
     std::vector<ParamData> sub_params_;
     std::vector<std::wstring> sub_descs_;
@@ -260,7 +280,7 @@ private:
 
     // Profile name entry (New)
     std::atomic<bool> name_entry_{false};
-    std::wstring name_text_;                // guarded by tiles_mtx_
+    NameEntryQueue name_queue_;             // typed text and decision; the input thread applies it
     windeck::output::TouchKeyboard* touch_kbd_ = nullptr;  // Windows touch keyboard
     HHOOK kbd_hook_ = nullptr;              // low-level keyboard hook (overlay thread)
 

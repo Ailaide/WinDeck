@@ -80,12 +80,13 @@ void NeptuneDevice::close() {
     }
 }
 
-int NeptuneDevice::read(InputReport& report) {
+int NeptuneDevice::read(InputReport& report, int timeout_ms) {
     if (!device_) return -1;
 
     uint8_t buf[64];
-    // 4ms timeout matches the controller's report interval
-    int bytes = hid_read_timeout(device_, buf, sizeof(buf), 4);
+    // The caller passes the controller's 4 ms report interval, or less when a
+    // trigger tap ends sooner.
+    int bytes = hid_read_timeout(device_, buf, sizeof(buf), timeout_ms < 0 ? 0 : timeout_ms);
 
     if (bytes < 0) {
         spdlog::error("HID read error");
@@ -245,6 +246,26 @@ void NeptuneDevice::send_haptic_cmd(uint8_t side, uint8_t haptic_cmd, int8_t gai
 
     hid_send_feature_report(device_,
         reinterpret_cast<const uint8_t*>(&report), sizeof(report));
+}
+
+bool NeptuneDevice::click_haptic(HapticSide side, int8_t gain_db) {
+    if (!device_) return false;
+
+    // {}: every field without a default (frequency, duration) is zero, so each
+    // click sends the same report.
+    TriggerHapticReport report{};
+    report.side = (side == HapticSide::Left) ? 0 : 1;   // 0xEA numbering, hardware-verified
+    report.cmd = 2;                                      // click
+    report.db_gain = gain_db;
+
+    int written = hid_send_feature_report(device_,
+        reinterpret_cast<const uint8_t*>(&report), sizeof(report));
+    if (written < 0) {
+        spdlog::debug("Haptic click write failed ({} side)",
+                      side == HapticSide::Left ? "left" : "right");
+        return false;
+    }
+    return true;
 }
 
 void NeptuneDevice::stop_haptics() {

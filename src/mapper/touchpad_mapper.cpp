@@ -500,17 +500,14 @@ void TouchpadMapper::set_click_held(bool held, windeck::output::SyntheticInput& 
 
 void TouchpadMapper::click_haptic() {
     if (!haptic_device_) return;
-    // 0xEA cmd=2 (click). Side encoding: 0=left, 1=right (hardware-verified; 2=both or invalid).
-    uint8_t side = (haptic_side_ == 0) ? 1 : 0;
-    haptic_device_->send_haptic_cmd(side, 2, 0);
+    haptic_device_->click_haptic(haptic_motor_, 0);
 }
 
 void TouchpadMapper::edge_entry_haptic() {
     if (!haptic_device_) return;
-    // Same 0xEA click haptic as touchpad click, but about one-third weaker.
+    // Same click as the touchpad click, but about one-third weaker.
     // 2/3 amplitude is ~ -3.5 dB; use -4 dB as nearest integer.
-    uint8_t side = (haptic_side_ == 0) ? 1 : 0;
-    haptic_device_->send_haptic_cmd(side, 2, -4);
+    haptic_device_->click_haptic(haptic_motor_, -4);
 }
 
 

@@ -41,12 +41,44 @@ struct StickConfig {
     bool operator==(const StickConfig&) const = default;
 };
 
+// Trigger operating mode: the analog Xbox trigger, or bindings A, B and C.
+enum class TriggerMode : uint8_t { Xbox, Buttons };
+
+// Hold keeps the action pressed while the pull is past the depth; Immediate
+// taps it once (kImmediateTapMs) when the depth is reached.
+enum class BindingMode : uint8_t { Hold, Immediate };
+
+// Haptic click on the trigger's side when a binding presses (and, in Hold
+// mode, releases). Low is the touchpad edge cue's -4 dB, High is full.
+enum class ClickStrength : uint8_t { None, Low, High };
+
+// Limits shared by the profile loader, the mapper and the menu.
+inline constexpr float kTriggerPullMin       = 0.10f;  // shallowest binding depth
+inline constexpr float kTriggerPullMax       = 1.00f;  // needs the raw maximum 32767
+inline constexpr float kTriggerDeadzoneMax   = 0.50f;
+inline constexpr float kTriggerReleaseGap    = 0.05f;  // Hold releases this far below its depth
+inline constexpr float kTriggerArmPull       = 0.05f;  // a disarmed trigger re-arms at or below this
+inline constexpr int   kImmediateTapMs       = 50;     // how long an Immediate tap holds its action
+inline constexpr size_t kTriggerBindings     = 3;      // A, B, C
+
+struct TriggerBinding {
+    ButtonAction  action = {ActionType::None, 0};
+    float         pull   = 0.30f;   // depth 0..1 of the raw trigger value
+    BindingMode   mode   = BindingMode::Hold;
+    ClickStrength click  = ClickStrength::Low;
+
+    bool operator==(const TriggerBinding&) const = default;
+};
+
 struct TriggerConfig {
-    float threshold = 0.02f;
-    // Optional button action when trigger exceeds a digital threshold
-    bool           has_button = false;
-    float          button_threshold = 0.8f;
-    ButtonAction   button_action;
+    TriggerMode mode = TriggerMode::Xbox;
+    float       deadzone = 0.02f;   // Xbox mode only
+    // Kept in Xbox mode too, so switching modes never loses the bindings.
+    std::array<TriggerBinding, kTriggerBindings> bindings = {{
+        {{ActionType::None, 0}, 0.30f, BindingMode::Hold, ClickStrength::Low},
+        {{ActionType::None, 0}, 0.60f, BindingMode::Hold, ClickStrength::Low},
+        {{ActionType::None, 0}, 0.95f, BindingMode::Hold, ClickStrength::Low},
+    }};
 
     bool operator==(const TriggerConfig&) const = default;
 };

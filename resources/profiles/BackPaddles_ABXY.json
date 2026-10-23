@@ -38,8 +38,20 @@
     "invert_y": false,
     "overlap": 0.5
   },
-  "left_trigger": { "threshold": 0.02 },
-  "right_trigger": { "threshold": 0.02 },
+  "left_trigger": {
+    "mode": "xbox",
+    "deadzone": 0.02,
+    "a": { "pull": 0.3, "action": { "type": "none", "code": 0 }, "mode": "hold", "click": "low" },
+    "b": { "pull": 0.6, "action": { "type": "none", "code": 0 }, "mode": "hold", "click": "low" },
+    "c": { "pull": 0.95, "action": { "type": "none", "code": 0 }, "mode": "hold", "click": "low" }
+  },
+  "right_trigger": {
+    "mode": "xbox",
+    "deadzone": 0.02,
+    "a": { "pull": 0.3, "action": { "type": "none", "code": 0 }, "mode": "hold", "click": "low" },
+    "b": { "pull": 0.6, "action": { "type": "none", "code": 0 }, "mode": "hold", "click": "low" },
+    "c": { "pull": 0.95, "action": { "type": "none", "code": 0 }, "mode": "hold", "click": "low" }
+  },
   "dpad": { "mode": "dpad", "overlap": 0.5 },
   "left_touchpad": {
     "mode": "scroll",

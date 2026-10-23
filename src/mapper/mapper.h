@@ -12,20 +12,30 @@ namespace windeck::overlay { class RadialOverlay; }
 #include "mapper/touchpad_mapper.h"
 #include "mapper/gyro_mapper.h"
 #include "output/synthetic_input.h"
+#include "output/xbox_state.h"
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <ViGEm/Client.h>
+#include <array>
+#include <chrono>
+#include <optional>
 #include <shared_mutex>
 
 namespace windeck::mapper {
 
 struct MapResult {
-    XUSB_REPORT xbox_report;
+    XUSB_REPORT xbox_report{};
     SystemButtonEvents sys_events;
+    // Haptic click for each trigger side (0 = left, 1 = right), sent by the
+    // caller after mapping, outside the mapper lock.
+    std::array<config::ClickStrength, 2> clicks{config::ClickStrength::None,
+                                                config::ClickStrength::None};
 };
 
 class Mapper {
 public:
+    using Clock = std::chrono::steady_clock;
+
     void set_device(windeck::neptune::NeptuneDevice* device);
     void apply_profile(const config::Profile& profile,
                        windeck::output::SyntheticInput& synth);
@@ -39,11 +49,19 @@ public:
     MapResult map_and_flush(const neptune::InputReport& input,
                             windeck::output::SyntheticInput& synth);
 
-    // Tick inertia for touchpads (call every frame).
+    // No new report: tick touchpad inertia and end trigger taps whose time is up.
     void tick(windeck::output::SyntheticInput& synth);
 
-    // Tick inertia + flush under one lock.
-    void tick_and_flush(windeck::output::SyntheticInput& synth);
+    // tick() + reconcile + flush under one lock. Returns the Xbox report with
+    // the triggers' current bits merged into every other source's last state.
+    XUSB_REPORT tick_and_flush(windeck::output::SyntheticInput& synth);
+
+    // When the earliest running trigger tap ends, if any (caps the read wait).
+    std::optional<Clock::time_point> next_deadline() const;
+
+    // After the menu closes: take the current physical buttons as already seen,
+    // so a button held through the menu keeps its hold but fires no wheel tick.
+    void resync_buttons(uint32_t buttons, uint32_t buttons_ext);
 
     // Forced release (menu open, reconnect, shutdown): every mapper and every
     // hold set is cleared and the releases are sent, all under the exclusive lock.
@@ -51,8 +69,11 @@ public:
 
 private:
     MapResult map_unlocked(const neptune::InputReport& input,
-                           windeck::output::SyntheticInput& synth);
+                           windeck::output::SyntheticInput& synth,
+                           Clock::time_point now);
+    void tick_unlocked(windeck::output::SyntheticInput& synth, Clock::time_point now);
     void release_all_unlocked(windeck::output::SyntheticInput& synth);
+    windeck::output::XboxState xbox_;
     mutable std::shared_mutex mutex_;
     using HoldSource = windeck::output::HoldSource;
     ButtonMapper   button_mapper_;

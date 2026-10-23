@@ -6,6 +6,8 @@
 
 namespace windeck::mapper {
 
+using windeck::output::XboxSource;
+
 void Mapper::set_overlay(windeck::overlay::RadialOverlay* overlay) {
     std::unique_lock lock(mutex_);
     left_touchpad_.set_overlay(overlay);
@@ -13,8 +15,8 @@ void Mapper::set_overlay(windeck::overlay::RadialOverlay* overlay) {
 }
 
 void Mapper::set_device(windeck::neptune::NeptuneDevice* device) {
-    left_touchpad_.set_haptic_device(device, 1);   // left grip
-    right_touchpad_.set_haptic_device(device, 0);  // right grip
+    left_touchpad_.set_haptic_device(device, windeck::neptune::HapticSide::Left);
+    right_touchpad_.set_haptic_device(device, windeck::neptune::HapticSide::Right);
 }
 
 void Mapper::apply_profile(const config::Profile& profile,
@@ -27,6 +29,8 @@ void Mapper::apply_profile(const config::Profile& profile,
     left_stick_.apply_config(profile.left_stick);
     right_stick_.apply_config(profile.right_stick);
 
+    // A new trigger config disarms the trigger: a binding the new profile adds
+    // never fires on its own while the trigger is already pulled.
     left_trigger_.apply_config(profile.left_trigger);
     right_trigger_.apply_config(profile.right_trigger);
 
@@ -43,30 +47,36 @@ void Mapper::apply_profile(const config::Profile& profile,
 MapResult Mapper::map(const neptune::InputReport& input,
                        windeck::output::SyntheticInput& synth) {
     std::shared_lock lock(mutex_);
-    return map_unlocked(input, synth);
+    return map_unlocked(input, synth, Clock::now());
 }
 
 MapResult Mapper::map_unlocked(const neptune::InputReport& input,
-                                windeck::output::SyntheticInput& synth) {
+                                windeck::output::SyntheticInput& synth,
+                                Clock::time_point now) {
     MapResult result;
-    std::memset(&result.xbox_report, 0, sizeof(result.xbox_report));
 
     // Buttons
-    result.xbox_report.wButtons = button_mapper_.map(
-        input.buttons, input.buttons_ext, result.sys_events, synth);
+    xbox_.set_buttons(XboxSource::Buttons, button_mapper_.map(
+        input.buttons, input.buttons_ext, result.sys_events, synth));
 
     // D-Pad
-    result.xbox_report.wButtons |= dpad_.map(input.buttons, synth);
+    xbox_.set_buttons(XboxSource::Dpad, dpad_.map(input.buttons, synth));
 
     // Sticks
-    left_stick_.map(input.left_stick_x, input.left_stick_y,
-                     result.xbox_report.sThumbLX, result.xbox_report.sThumbLY, synth);
-    right_stick_.map(input.right_stick_x, input.right_stick_y,
-                      result.xbox_report.sThumbRX, result.xbox_report.sThumbRY, synth);
+    int16_t lx = 0, ly = 0, rx = 0, ry = 0;
+    left_stick_.map(input.left_stick_x, input.left_stick_y, lx, ly, synth);
+    right_stick_.map(input.right_stick_x, input.right_stick_y, rx, ry, synth);
+    xbox_.set_left_stick(lx, ly);
+    xbox_.set_right_stick(rx, ry);
 
     // Triggers
-    result.xbox_report.bLeftTrigger  = left_trigger_.map(input.left_trigger, synth);
-    result.xbox_report.bRightTrigger = right_trigger_.map(input.right_trigger, synth);
+    const TriggerFrame lt = left_trigger_.update(input.left_trigger, now, synth);
+    const TriggerFrame rt = right_trigger_.update(input.right_trigger, now, synth);
+    xbox_.set_left_trigger(lt.axis);
+    xbox_.set_right_trigger(rt.axis);
+    xbox_.set_buttons(XboxSource::LeftTrigger, lt.xbox_buttons);
+    xbox_.set_buttons(XboxSource::RightTrigger, rt.xbox_buttons);
+    result.clicks = {lt.click, rt.click};
 
     // Touchpads — coordinates reset to (0,0) when finger lifts (verified on hardware)
     bool touching_left  = (input.left_pad_x != 0 || input.left_pad_y != 0);
@@ -80,13 +90,14 @@ MapResult Mapper::map_unlocked(const neptune::InputReport& input,
     // Gyro
     gyro_.update(input.gyro_pitch, input.gyro_yaw, input.gyro_roll, synth);
 
+    result.xbox_report = xbox_.report();
     return result;
 }
 
 MapResult Mapper::map_and_flush(const neptune::InputReport& input,
                                 windeck::output::SyntheticInput& synth) {
     std::shared_lock lock(mutex_);
-    MapResult result = map_unlocked(input, synth);
+    MapResult result = map_unlocked(input, synth, Clock::now());
     left_touchpad_.tick_inertia(synth);
     right_touchpad_.tick_inertia(synth);
     synth.reconcile_holds();   // one press/release per key and mouse button across all sources
@@ -96,15 +107,39 @@ MapResult Mapper::map_and_flush(const neptune::InputReport& input,
 
 void Mapper::tick(windeck::output::SyntheticInput& synth) {
     std::shared_lock lock(mutex_);
-    left_touchpad_.tick_inertia(synth);
-    right_touchpad_.tick_inertia(synth);
+    tick_unlocked(synth, Clock::now());
 }
 
-void Mapper::tick_and_flush(windeck::output::SyntheticInput& synth) {
+XUSB_REPORT Mapper::tick_and_flush(windeck::output::SyntheticInput& synth) {
     std::shared_lock lock(mutex_);
+    tick_unlocked(synth, Clock::now());
+    // Only the triggers' sets can have changed (a tap ending); every other
+    // source keeps its last set, so this never lifts another source's key.
+    synth.reconcile_holds();
+    synth.flush();
+    return xbox_.report();
+}
+
+void Mapper::tick_unlocked(windeck::output::SyntheticInput& synth, Clock::time_point now) {
     left_touchpad_.tick_inertia(synth);
     right_touchpad_.tick_inertia(synth);
-    synth.flush();
+    // Taps whose 50 ms are up end now, even without a report; the other
+    // sources' Xbox contributions stay as the last report left them.
+    xbox_.set_buttons(XboxSource::LeftTrigger, left_trigger_.tick(now, synth).xbox_buttons);
+    xbox_.set_buttons(XboxSource::RightTrigger, right_trigger_.tick(now, synth).xbox_buttons);
+}
+
+std::optional<Mapper::Clock::time_point> Mapper::next_deadline() const {
+    std::shared_lock lock(mutex_);
+    auto l = left_trigger_.next_deadline();
+    auto r = right_trigger_.next_deadline();
+    if (l && r) return (*l < *r) ? l : r;
+    return l ? l : r;
+}
+
+void Mapper::resync_buttons(uint32_t buttons, uint32_t buttons_ext) {
+    std::unique_lock lock(mutex_);
+    button_mapper_.resync(buttons, buttons_ext);
 }
 
 void Mapper::release_all(windeck::output::SyntheticInput& synth) {
@@ -125,6 +160,7 @@ void Mapper::release_all_unlocked(windeck::output::SyntheticInput& synth) {
     right_touchpad_.release_all(synth);
     left_trigger_.release_all(synth);
     right_trigger_.release_all(synth);
+    xbox_.clear();
     // Every source's set is now empty: queue the releases (sent on the next flush).
     synth.reconcile_holds();
 }

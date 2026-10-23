@@ -19,6 +19,7 @@
 #include <atomic>
 #include <csignal>
 #include <thread>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 
@@ -68,10 +69,17 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
     InputReport input{};
     uint64_t error_count = 0;
     constexpr int kMaxConsecutiveErrors = 50;
+    constexpr int kReportIntervalMs = 4;   // the controller sends a report every ~4 ms
 
     // Local edge detection for QAM navigation (separate from ButtonMapper)
     uint32_t prev_nav_btn = 0;
     bool prev_qam_open = false;
+
+    // Raw edges of the system buttons (Steam, Quick Access), tracked on every
+    // report, menu open or not, and seeded by the first report so a button held
+    // at start-up is not a press.
+    bool sys_seeded = false;
+    uint32_t sys_prev = 0, sys_prev_ext = 0;
 
     // Owned (not detached) background saver for profile auto-save on QAM close.
     // Joined before this function returns — which happens before main() destroys
@@ -81,10 +89,29 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
     spdlog::info("Input loop started");
 
     while (g_running.load(std::memory_order_relaxed)) {
-        int read_result = device.read(input);
+        // A profile name typed (or cancelled) on the touch keyboard is applied
+        // here, on the input thread, which owns every profile change.
+        qam.process_name_entry();
+
+        // Wait for the next report, but no longer than until a trigger tap ends;
+        // a deadline already passed is handled at once.
+        int timeout_ms = kReportIntervalMs;
+        if (auto deadline = mapper.next_deadline()) {
+            auto left = std::chrono::ceil<std::chrono::milliseconds>(
+                *deadline - std::chrono::steady_clock::now()).count();
+            timeout_ms = static_cast<int>(std::clamp<long long>(left, 0, kReportIntervalMs));
+        }
+        int read_result = device.read(input, timeout_ms);
 
         if (read_result > 0) {
             error_count = 0;
+
+            const uint32_t steam_rise = sys_seeded ? (input.buttons & ~sys_prev) & btn::kSteam : 0;
+            const uint32_t quick_access_rise =
+                sys_seeded ? (input.buttons_ext & ~sys_prev_ext) & btn_ext::kQuickAccess : 0;
+            sys_prev = input.buttons;
+            sys_prev_ext = input.buttons_ext;
+            sys_seeded = true;
 
             bool qam_open = qam.is_visible();
 
@@ -120,14 +147,41 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                 }
                 if (rising & btn::kSteam)     qam.hide();
 
+                // Every report the menu takes becomes the mapper's button history:
+                // after the menu closes, a button held through it keeps its hold
+                // but is no new press (no wheel tick or system event), while a
+                // button pressed in the first report after it is one.
+                mapper.resync_buttons(input.buttons, input.buttons_ext);
+
                 // Send zeroed report to Xbox — game sees no input
                 XUSB_REPORT zero{};
                 xbox.update(zero);
+
+            } else if (steam_rise) {
+                // Steam button -> open Quick Access Menu. This report is not
+                // mapped, so nothing it would press reaches the game: everything
+                // is released, the triggers are disarmed, the pad goes neutral.
+                mapper.release_all(synth);
+                XUSB_REPORT zero{};
+                xbox.update(zero);
+
+                qam.update_tiles(config.get_profile());
+                qam.show();
+                prev_nav_btn = input.buttons; // sync edge detection
 
             } else {
                 // Normal input path (map+tick+flush under one lock)
                 auto result = mapper.map_and_flush(input, synth);
                 xbox.update(result.xbox_report);
+
+                // Trigger clicks, after mapping and outside the mapper lock, on
+                // the trigger's own side: Low is -4 dB, High is full strength.
+                for (int side = 0; side < 2; side++) {
+                    auto click = result.clicks[static_cast<size_t>(side)];
+                    if (click == windeck::config::ClickStrength::None) continue;
+                    device.click_haptic(side == 0 ? HapticSide::Left : HapticSide::Right,
+                                        click == windeck::config::ClickStrength::High ? 0 : -4);
+                }
 
                 // Rumble passthrough (time-throttled)
                 static auto next_rumble_send = std::chrono::steady_clock::now();
@@ -140,36 +194,35 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                     device.send_rumble(left, right);
                 }
 
-                // Steam button -> open Quick Access Menu
-                if (result.sys_events.steam_pressed) {
-                    mapper.release_all(synth);
-                    XUSB_REPORT zero{};
-                    xbox.update(zero);
-
-                    qam.update_tiles(config.get_profile());
-                    qam.show();
-                    prev_nav_btn = input.buttons; // sync edge detection
-                }
-
                 // Quick Access button -> show or hide the touch keyboard
-                if (result.sys_events.quick_access_pressed) {
+                if (quick_access_rise) {
                     spdlog::info("Quick Access button pressed, toggling touch keyboard");
                     touch_keyboard.toggle();
                 }
             }
         } else if (read_result == 0) {
-            // Timeout — tick inertia only when QAM is closed
+            // Timeout: tick inertia and end trigger taps whose time is up, only
+            // when QAM is closed. The report keeps every other source's state.
             if (!qam.is_visible()) {
-                mapper.tick_and_flush(synth);
+                xbox.update(mapper.tick_and_flush(synth));
             }
         } else {
             error_count++;
             if (error_count == 1) {
                 spdlog::warn("HID read issue detected, monitoring...");
             }
+            // A failed read still ends trigger taps whose time is up, so a tap
+            // never stays pressed while the controller is unreachable.
+            if (!qam.is_visible()) {
+                xbox.update(mapper.tick_and_flush(synth));
+            }
             if (error_count >= kMaxConsecutiveErrors) {
                 spdlog::error("Too many consecutive HID errors, attempting reconnect...");
+                // Release everything and leave the pad neutral before waiting:
+                // nothing stays pressed through the reconnect sleeps.
                 mapper.release_all(synth);
+                XUSB_REPORT zero{};
+                xbox.update(zero);
                 device.close();
                 std::this_thread::sleep_for(std::chrono::seconds(1));
                 if (device.open()) {

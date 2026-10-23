@@ -8,8 +8,6 @@ namespace windeck::overlay {
 // Custom overlay-thread messages for profile name entry (handled in on_app_message).
 static constexpr UINT WM_QAM_KBD_ON      = WM_APP + 20;
 static constexpr UINT WM_QAM_KBD_OFF     = WM_APP + 21;
-static constexpr UINT WM_QAM_NAME_COMMIT = WM_APP + 22;
-static constexpr UINT WM_QAM_NAME_CANCEL = WM_APP + 23;
 
 // Active name-entry target for the low-level keyboard hook, plus modifier state.
 static std::atomic<QuickAccessOverlay*> s_name_target{nullptr};
@@ -145,22 +143,56 @@ static const wchar_t* kMainTileLabels[] = {
     L"Gyro",  L"L-Pad",   L"R-Pad"
 };
 
-static const wchar_t* kTopTileLabels[] = { L"LB", L"RB" };
+static const wchar_t* kTopTileLabels[] = { L"LT", L"LB", L"RB", L"RT" };
 static const wchar_t* kMiniRow1Labels[] = { L"A", L"B", L"X", L"Y" };
 static const wchar_t* kMiniRow2Labels[] = { L"Start", L"Back", L"LS Click", L"RS Click" };
 static const wchar_t* kBottomLabels[] = { L"L4", L"L5", L"R4", L"R5" };
 
-// ButtonId mapping for remap tiles (order: top4, mini1x4, mini2x4, bottom4 = 16 total)
-static const config::ButtonId kRemapButtonIds[] = {
-    // Top: LB, RB
-    config::ButtonId::LB, config::ButtonId::RB,
-    // Mini row 1: A, B, X, Y
-    config::ButtonId::A, config::ButtonId::B, config::ButtonId::X, config::ButtonId::Y,
-    // Mini row 2: Start, Back, LSClick, RSClick
-    config::ButtonId::Start, config::ButtonId::Back, config::ButtonId::LSClick, config::ButtonId::RSClick,
-    // Bottom: L4, L5, R4, R5
-    config::ButtonId::L4, config::ButtonId::L5, config::ButtonId::R4, config::ButtonId::R5,
+// What each remap tile edits, in display order (top 4, mini1 x4, mini2 x4,
+// bottom 4 = 16): a button, or a trigger side. LT and RT never map to a ButtonId.
+struct RemapTarget {
+    bool trigger;              // true: trigger `side`; false: button `bid`
+    config::ButtonId bid;
+    int side;                  // 0 = LT, 1 = RT
 };
+static constexpr RemapTarget kRemapTargets[] = {
+    // Top: LT, LB, RB, RT
+    {true,  config::ButtonId::Count, 0}, {false, config::ButtonId::LB, 0},
+    {false, config::ButtonId::RB, 0},    {true,  config::ButtonId::Count, 1},
+    // Mini row 1: A, B, X, Y
+    {false, config::ButtonId::A, 0}, {false, config::ButtonId::B, 0},
+    {false, config::ButtonId::X, 0}, {false, config::ButtonId::Y, 0},
+    // Mini row 2: Start, Back, LSClick, RSClick
+    {false, config::ButtonId::Start, 0},   {false, config::ButtonId::Back, 0},
+    {false, config::ButtonId::LSClick, 0}, {false, config::ButtonId::RSClick, 0},
+    // Bottom: L4, L5, R4, R5
+    {false, config::ButtonId::L4, 0}, {false, config::ButtonId::L5, 0},
+    {false, config::ButtonId::R4, 0}, {false, config::ButtonId::R5, 0},
+};
+
+static const wchar_t* kBindingLetters[config::kTriggerBindings] = { L"A", L"B", L"C" };
+
+static const wchar_t* trigger_name(int side) { return side == 0 ? L"LT" : L"RT"; }
+
+static const wchar_t* binding_mode_name(config::BindingMode m) {
+    return m == config::BindingMode::Immediate ? L"Immediate" : L"Hold";
+}
+
+static const wchar_t* click_name(config::ClickStrength c) {
+    switch (c) {
+        case config::ClickStrength::None: return L"None";
+        case config::ClickStrength::High: return L"High";
+        default:                          return L"Low";
+    }
+}
+
+static config::ClickStrength next_click(config::ClickStrength c) {
+    switch (c) {
+        case config::ClickStrength::None: return config::ClickStrength::Low;
+        case config::ClickStrength::Low:  return config::ClickStrength::High;
+        default:                          return config::ClickStrength::None;
+    }
+}
 
 // Descriptions per zone
 static const wchar_t* kMainDescriptions[] = {
@@ -177,6 +209,13 @@ static const wchar_t* kMainDescriptions[] = {
 static std::wstring fmt_float(float v, int decimals) {
     wchar_t buf[32];
     swprintf(buf, 32, decimals == 1 ? L"%.1f" : L"%.2f", v);
+    return buf;
+}
+
+// A 0..1 value as a whole percentage ("30%").
+static std::wstring fmt_percent(float v) {
+    wchar_t buf[16];
+    swprintf(buf, 16, L"%d%%", static_cast<int>(std::lround(v * 100.0f)));
     return buf;
 }
 
@@ -264,6 +303,31 @@ std::wstring QuickAccessOverlay::action_display(const config::ButtonAction& a) c
     return L"?";
 }
 
+// Trigger tile text: "Trigger" in Xbox mode, else bindings A, B and C in short
+// form ("RMB · – · LMB").
+std::wstring QuickAccessOverlay::trigger_display(const config::TriggerConfig& t) const {
+    if (t.mode == config::TriggerMode::Xbox) return L"Trigger";
+    std::wstring out;
+    for (size_t i = 0; i < config::kTriggerBindings; i++) {
+        const auto& a = t.bindings[i].action;
+        std::wstring s;
+        switch (a.type) {
+            case config::ActionType::None:        s = L"–"; break;
+            case config::ActionType::Keyboard:    s = keyboard_key_label(a.code); break;
+            case config::ActionType::MouseButton: s = a.code == 0 ? L"LMB" : a.code == 1 ? L"RMB" : L"MMB"; break;
+            case config::ActionType::MouseScroll: s = a.code == 1 ? L"Whl↑" : L"Whl↓"; break;
+            case config::ActionType::XboxButton: {
+                s = action_display(a);
+                if (s.rfind(L"Xbox ", 0) == 0) s = s.substr(5);
+                break;
+            }
+        }
+        if (i > 0) out += L" · ";
+        out += s;
+    }
+    return out;
+}
+
 // --- Remap picker: static data ---
 
 static constexpr float kPickerTabH = 40.0f;
@@ -328,7 +392,10 @@ void QuickAccessOverlay::show() {
 }
 
 void QuickAccessOverlay::hide() {
-    if (name_entry_.load(std::memory_order_relaxed)) end_name_entry(false);
+    // A name already accepted with Enter is applied before the menu closes (and
+    // before the close-time save); an entry still open is cancelled.
+    process_name_entry();
+    if (name_entry_.load(std::memory_order_relaxed)) cancel_name_entry();
     visible_.store(false, std::memory_order_relaxed);
     submenu_open_.store(false, std::memory_order_relaxed);
     dropdown_open_.store(false, std::memory_order_relaxed);
@@ -398,7 +465,8 @@ void QuickAccessOverlay::navigate_main(int dx, int dy) {
 void QuickAccessOverlay::activate() {
     if (picker_open_.load(std::memory_order_relaxed)) { picker_bind_current(); return; }
     if (name_entry_.load(std::memory_order_relaxed)) {
-        end_name_entry(true);
+        name_queue_.accept();
+        process_name_entry();
         return;
     }
     if (dropdown_open_.load(std::memory_order_relaxed)) {
@@ -439,6 +507,18 @@ void QuickAccessOverlay::activate() {
         return;
     }
 
+    // Trigger tiles: switch between the analog Xbox trigger and Buttons.
+    if (int side = trigger_side_for_cursor(cur); side >= 0) {
+        auto profile = config_.get_profile();
+        auto& t = (side == 0) ? profile.left_trigger : profile.right_trigger;
+        t.mode = (t.mode == config::TriggerMode::Xbox) ? config::TriggerMode::Buttons
+                                                       : config::TriggerMode::Xbox;
+        config_.set_profile(profile);
+        update_tiles(profile);
+        mapper_.apply_profile(profile, synth_);
+        return;
+    }
+
     // Remap tiles: open the remap picker to choose a new binding.
     open_picker();
 }
@@ -459,6 +539,12 @@ void QuickAccessOverlay::press_x() {
     // Main tiles: enter submenu
     if (cur >= kZoneMain && cur < kZoneMain + kTiles) {
         enter_submenu();
+        return;
+    }
+
+    // Trigger tiles: their settings
+    if (int side = trigger_side_for_cursor(cur); side >= 0) {
+        enter_trigger_submenu(side);
         return;
     }
 
@@ -491,9 +577,16 @@ config::ButtonId QuickAccessOverlay::button_id_for_cursor(int cursor) const {
     else if (cursor >= kZoneBottom && cursor < kZoneBottom + kBottomTiles)
         remap_idx = kTopTiles + kMiniRow1 + kMiniRow2 + (cursor - kZoneBottom);
 
-    if (remap_idx >= 0 && remap_idx < static_cast<int>(std::size(kRemapButtonIds)))
-        return kRemapButtonIds[remap_idx];
+    if (remap_idx >= 0 && remap_idx < static_cast<int>(std::size(kRemapTargets)) &&
+        !kRemapTargets[remap_idx].trigger)
+        return kRemapTargets[remap_idx].bid;
     return config::ButtonId::Count;
+}
+
+int QuickAccessOverlay::trigger_side_for_cursor(int cursor) const {
+    if (cursor < kZoneTop || cursor >= kZoneTop + kTopTiles) return -1;
+    const auto& t = kRemapTargets[cursor - kZoneTop];
+    return t.trigger ? t.side : -1;
 }
 
 // --- Submenu ---
@@ -508,11 +601,33 @@ void QuickAccessOverlay::enter_submenu() {
     if (sub_params_.empty()) return;
 
     submenu_tile_ = ti;
+    submenu_trigger_ = false;
     sub_cursor_ = 0;
     submenu_open_.store(true, std::memory_order_relaxed);
 
     // Post resize to overlay thread (wp=new_width)
     PostMessage(hwnd(), WM_OVR_RESIZE, kTotalW + kSubmenuW, 0);
+}
+
+void QuickAccessOverlay::enter_trigger_submenu(int side) {
+    auto profile = config_.get_profile();
+    std::lock_guard lock(tiles_mtx_);
+    build_trigger_params(side, profile);
+    if (sub_params_.empty()) return;
+
+    submenu_trigger_ = true;
+    submenu_side_ = side;
+    sub_cursor_ = 0;
+    submenu_open_.store(true, std::memory_order_relaxed);
+    PostMessage(hwnd(), WM_OVR_RESIZE, kTotalW + kSubmenuW, 0);
+}
+
+void QuickAccessOverlay::rebuild_submenu(const config::Profile& profile) {
+    // Called with tiles_mtx_ held.
+    if (submenu_trigger_) build_trigger_params(submenu_side_, profile);
+    else                  build_sub_params(submenu_tile_, profile);
+    if (sub_cursor_ >= static_cast<int>(sub_params_.size()))
+        sub_cursor_ = sub_params_.empty() ? 0 : static_cast<int>(sub_params_.size()) - 1;
 }
 
 void QuickAccessOverlay::exit_submenu() {
@@ -547,8 +662,6 @@ bool QuickAccessOverlay::on_app_message(UINT msg, WPARAM wp, LPARAM /*lp*/) {
         if (kbd_hook_) { UnhookWindowsHookEx(kbd_hook_); kbd_hook_ = nullptr; }
         return true;
     }
-    if (msg == WM_QAM_NAME_COMMIT) { end_name_entry(true);  return true; }
-    if (msg == WM_QAM_NAME_CANCEL) { end_name_entry(false); return true; }
     return false;
 }
 
@@ -678,10 +791,7 @@ static std::string sanitize_profile_name(const std::string& in) {
 
 void QuickAccessOverlay::begin_name_entry() {
     if (name_entry_.exchange(true, std::memory_order_relaxed)) return;
-    {
-        std::lock_guard lock(tiles_mtx_);
-        name_text_.clear();
-    }
+    name_queue_.begin();
     s_name_target.store(this, std::memory_order_relaxed);
     // Queue show() before WM_QAM_KBD_ON installs the hook: the hook can end the
     // entry on the overlay thread, and that hide() must come after this show().
@@ -690,18 +800,15 @@ void QuickAccessOverlay::begin_name_entry() {
     invalidate();
 }
 
-void QuickAccessOverlay::end_name_entry(bool commit) {
+// Input thread only (via process_name_entry): ends the entry and, on commit,
+// creates and applies the profile named `wname`.
+void QuickAccessOverlay::end_name_entry(bool commit, const std::wstring& wname) {
     if (!name_entry_.exchange(false, std::memory_order_relaxed)) return;
     s_name_target.store(nullptr, std::memory_order_relaxed);
     PostMessageW(hwnd(), WM_QAM_KBD_OFF, 0, 0);
     if (touch_kbd_) touch_kbd_->hide();
 
     if (commit) {
-        std::wstring wname;
-        {
-            std::lock_guard lock(tiles_mtx_);
-            wname = name_text_;
-        }
         std::string name = config_.unique_name(sanitize_profile_name(to_utf8(wname)));
         config_.save_profile();   // persist edits to the outgoing profile (no-op for Default)
         if (config_.create_from_default(name)) {
@@ -712,22 +819,23 @@ void QuickAccessOverlay::end_name_entry(bool commit) {
 }
 
 void QuickAccessOverlay::cancel_name_entry() {
-    end_name_entry(false);
+    // An accepted name that is still waiting wins over this cancel.
+    name_queue_.cancel();
+    process_name_entry();
+}
+
+void QuickAccessOverlay::process_name_entry() {
+    if (auto outcome = name_queue_.take())
+        end_name_entry(outcome->commit, outcome->name);
 }
 
 void QuickAccessOverlay::name_append(wchar_t c) {
-    {
-        std::lock_guard lock(tiles_mtx_);
-        if (name_text_.size() < 40) name_text_.push_back(c);
-    }
+    name_queue_.append(c);
     invalidate();
 }
 
 void QuickAccessOverlay::name_backspace() {
-    {
-        std::lock_guard lock(tiles_mtx_);
-        if (!name_text_.empty()) name_text_.pop_back();
-    }
+    name_queue_.backspace();
     invalidate();
 }
 
@@ -746,8 +854,11 @@ LRESULT CALLBACK QuickAccessOverlay::kbd_hook_proc(int code, WPARAM wp, LPARAM l
             }
             if (vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT) { s_kb_shift = true; return 1; }
             if (vk == VK_CAPITAL) { s_kb_caps = !s_kb_caps; return 1; }
-            if (vk == VK_RETURN)  { PostMessageW(target->hwnd(), WM_QAM_NAME_COMMIT, 0, 0); return 1; }
-            if (vk == VK_ESCAPE)  { PostMessageW(target->hwnd(), WM_QAM_NAME_CANCEL, 0, 0); return 1; }
+            // Enter / Escape: record the decision now, with the text as typed so
+            // far; the input thread applies it (process_name_entry), as it owns
+            // profile changes.
+            if (vk == VK_RETURN)  { target->name_queue_.accept(); return 1; }
+            if (vk == VK_ESCAPE)  { target->name_queue_.cancel(); return 1; }
             if (vk == VK_BACK)    { target->name_backspace(); return 1; }
 
             BYTE ks[256] = {};
@@ -787,9 +898,11 @@ void QuickAccessOverlay::navigate_submenu(int dx, int dy) {
     if (dx != 0) {
         auto& p = sub_params_[sub_cursor_];
         if (p.type == ParamType::Slider) {
+            // Steps from the current value, so a depth off the grid (set in the
+            // JSON) keeps its offset rather than snapping.
             p.value = std::clamp(p.value + dx * p.step, p.min_val, p.max_val);
             int dec = (p.step < 0.05f) ? 2 : 1;
-            p.value_text = fmt_float(p.value, dec);
+            p.value_text = p.percent ? fmt_percent(p.value) : fmt_float(p.value, dec);
             apply_sub_param(sub_cursor_);
             invalidate();
         }
@@ -801,11 +914,13 @@ void QuickAccessOverlay::activate_submenu() {
     // lock first so it can post a resize / touch config without holding tiles_mtx_).
     RemapDest dest = RemapDest::Button;
     int sector = 0;
+    int target = 0;
     bool open_picker = false;
     {
         std::lock_guard lock(tiles_mtx_);
         if (sub_cursor_ < 0 || sub_cursor_ >= static_cast<int>(sub_params_.size())) return;
         auto& p = sub_params_[sub_cursor_];
+        target = submenu_trigger_ ? submenu_side_ : submenu_tile_;
 
         if (p.type == ParamType::Button) {
             cycle_sub_button(sub_cursor_);
@@ -824,7 +939,57 @@ void QuickAccessOverlay::activate_submenu() {
         }
     }
     if (open_picker)
-        open_picker_submenu(dest, submenu_tile_, sector);
+        open_picker_submenu(dest, target, sector);
+}
+
+void QuickAccessOverlay::build_trigger_params(int side, const config::Profile& profile) {
+    // Called with tiles_mtx_ held.
+    sub_params_.clear();
+    sub_descs_.clear();
+    const auto& t = (side == 0) ? profile.left_trigger : profile.right_trigger;
+
+    if (t.mode == config::TriggerMode::Xbox) {
+        sub_header_ = std::wstring(trigger_name(side)) + L" > Xbox trigger";
+        ParamData p{L"Dead zone", fmt_percent(t.deadzone), ParamType::Slider,
+                    t.deadzone, 0.0f, config::kTriggerDeadzoneMax, 0.01f};
+        p.percent = true;
+        sub_params_.push_back(p);
+        sub_descs_.push_back(L"Pull below this sends nothing to the game; above it, the analog trigger starts.");
+        return;
+    }
+
+    sub_header_ = std::wstring(trigger_name(side)) + L" > Buttons";
+    for (size_t i = 0; i < config::kTriggerBindings; i++) {
+        const auto& b = t.bindings[i];
+        const std::wstring letter = kBindingLetters[i];
+        const int bi = static_cast<int>(i);
+
+        ParamData action{L"Binding " + letter, action_display(b.action), ParamType::Remap,
+                         0, 0, 0, 0, RemapDest::TriggerBinding, bi};
+        action.trigger_binding = bi;
+        sub_params_.push_back(action);
+        sub_descs_.push_back(L"What binding " + letter + L" sends. Press A to choose; Y in the picker clears it.");
+
+        ParamData pull{letter + L" pull", fmt_percent(b.pull), ParamType::Slider,
+                       b.pull, config::kTriggerPullMin, config::kTriggerPullMax, 0.05f};
+        pull.trigger_binding = bi;
+        pull.percent = true;
+        sub_params_.push_back(pull);
+        sub_descs_.push_back(L"How far to pull before binding " + letter +
+                             L" acts. Each binding has its own depth.");
+
+        ParamData mode{letter + L" mode", binding_mode_name(b.mode), ParamType::Button, 0, 0, 0, 0};
+        mode.trigger_binding = bi;
+        sub_params_.push_back(mode);
+        sub_descs_.push_back(L"Hold keeps the action pressed while pulled past the depth. "
+                             L"Immediate taps it once, with nothing on release.");
+
+        ParamData click{letter + L" click", click_name(b.click), ParamType::Button, 0, 0, 0, 0};
+        click.trigger_binding = bi;
+        sub_params_.push_back(click);
+        sub_descs_.push_back(L"Haptic click on this side: None, Low or High. Hold clicks on press and "
+                             L"release, Immediate on press only.");
+    }
 }
 
 void QuickAccessOverlay::build_sub_params(int main_tile, const config::Profile& profile) {
@@ -933,6 +1098,21 @@ void QuickAccessOverlay::build_sub_params(int main_tile, const config::Profile& 
 void QuickAccessOverlay::apply_sub_param(int /*param_idx*/) {
     // Write current sub_params_ values back to profile
     auto profile = config_.get_profile();
+
+    if (submenu_trigger_) {
+        auto& t = (submenu_side_ == 0) ? profile.left_trigger : profile.right_trigger;
+        for (const auto& p : sub_params_) {
+            if (p.type != ParamType::Slider) continue;
+            if (p.trigger_binding >= 0)
+                t.bindings[static_cast<size_t>(p.trigger_binding)].pull = p.value;
+            else
+                t.deadzone = p.value;
+        }
+        config_.set_profile(profile);
+        mapper_.apply_profile(profile, synth_);
+        return;
+    }
+
     auto ti = static_cast<MainTileId>(submenu_tile_);
 
     // Rebuild from sub_params_ based on tile type
@@ -998,8 +1178,27 @@ void QuickAccessOverlay::apply_sub_param(int /*param_idx*/) {
 
 void QuickAccessOverlay::cycle_sub_button(int param_idx) {
     auto profile = config_.get_profile();
-    auto ti = static_cast<MainTileId>(submenu_tile_);
     auto& p = sub_params_[param_idx];
+
+    if (submenu_trigger_) {
+        if (p.trigger_binding < 0) return;
+        auto& t = (submenu_side_ == 0) ? profile.left_trigger : profile.right_trigger;
+        auto& b = t.bindings[static_cast<size_t>(p.trigger_binding)];
+        const std::wstring& l = p.label;
+        if (l.size() >= 5 && l.compare(l.size() - 5, 5, L" mode") == 0) {
+            b.mode = (b.mode == config::BindingMode::Hold) ? config::BindingMode::Immediate
+                                                            : config::BindingMode::Hold;
+            p.value_text = binding_mode_name(b.mode);
+        } else if (l.size() >= 6 && l.compare(l.size() - 6, 6, L" click") == 0) {
+            b.click = next_click(b.click);
+            p.value_text = click_name(b.click);
+        }
+        config_.set_profile(profile);
+        mapper_.apply_profile(profile, synth_);
+        return;
+    }
+
+    auto ti = static_cast<MainTileId>(submenu_tile_);
 
     // Identify which button param by label
     if (p.label == L"Response Curve") {
@@ -1038,8 +1237,12 @@ void QuickAccessOverlay::refresh_all(const config::Profile& profile) {
 void QuickAccessOverlay::refresh_all_locked(const config::Profile& profile) {
     // Must be called with tiles_mtx_ held
     for (int i = 0; i < kRemapTiles; i++) {
-        auto bid = kRemapButtonIds[i];
-        remap_display_[i] = action_display(profile.buttons[static_cast<int>(bid)]);
+        const auto& t = kRemapTargets[i];
+        if (t.trigger)
+            remap_display_[i] = trigger_display(t.side == 0 ? profile.left_trigger
+                                                            : profile.right_trigger);
+        else
+            remap_display_[i] = action_display(profile.buttons[static_cast<int>(t.bid)]);
     }
 }
 
@@ -1184,11 +1387,12 @@ void QuickAccessOverlay::on_paint() {
         float profile_bar_y = y;
         y += kProfileRowH + kProfileGap;
 
-        // --- Top row: LB (left), RB (right) ---
+        // --- Top row: LT, LB, RB, RT ---
         float tw = static_cast<float>(kSmallTileW);
-        draw_small_tile(x, y, tw, kTopTileLabels[0], remap_display_[0], cur == kZoneTop);
-        float rx = static_cast<float>(kTotalW - kPad) - tw;
-        draw_small_tile(rx, y, tw, kTopTileLabels[1], remap_display_[1], cur == kZoneTop + 1);
+        for (int i = 0; i < kTopTiles; i++) {
+            float tx = x + i * (tw + kGap);
+            draw_small_tile(tx, y, tw, kTopTileLabels[i], remap_display_[i], cur == kZoneTop + i);
+        }
         y += kSmallTileH + kGap;
 
         // --- Main 3x2 tiles ---
@@ -1345,9 +1549,11 @@ void QuickAccessOverlay::draw_small_tile(float x, float y, float w,
                   action_fmt_, lr, br_dim_text_,
                   D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
     D2D1_RECT_F vr = D2D1::RectF(x + w * 0.4f, y, x + w - 8, y + kSmallTileH);
+    // Clipped: a long value (three trigger bindings, a long key name) never
+    // spills out of its tile.
     rt_->DrawText(value.c_str(), static_cast<UINT32>(value.size()),
                   mini_fmt_, vr, selected ? br_active_ : br_text_,
-                  D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                  D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL);
 }
 
 void QuickAccessOverlay::draw_mini_tile(float x, float y, float w,
@@ -1503,6 +1709,12 @@ void QuickAccessOverlay::draw_action_bar() {
         }
         draw_glyph(L'B'); draw_text_hint(L"Close", 60);
 
+    } else if (trigger_side_for_cursor(cur) >= 0) {
+        // Trigger tiles: both modes have settings.
+        draw_glyph(L'A'); draw_text_hint(L"Change mode", 130);
+        draw_glyph(L'X'); draw_text_hint(L"Settings", 90);
+        draw_glyph(L'B'); draw_text_hint(L"Close", 60);
+
     } else {
         // Remap tiles: A opens the picker.
         draw_glyph(L'A'); draw_text_hint(L"Remap", 70);
@@ -1521,6 +1733,11 @@ void QuickAccessOverlay::draw_description() {
         desc = L"Choose what ";
         if (dest == RemapDest::RadialKey) {
             desc += L"radial sector " + std::to_wstring(picker_sector_.load(std::memory_order_relaxed) + 1);
+        } else if (dest == RemapDest::TriggerBinding) {
+            int b = std::clamp(picker_sector_.load(std::memory_order_relaxed), 0,
+                               static_cast<int>(config::kTriggerBindings) - 1);
+            desc += std::wstring(L"binding ") + kBindingLetters[b] + L" of " +
+                    trigger_name(picker_side_.load(std::memory_order_relaxed));
         } else if (dest == RemapDest::ClickAction) {
             desc += L"the touchpad click";
         } else {
@@ -1547,6 +1764,10 @@ void QuickAccessOverlay::draw_description() {
             desc = L"Default is a read-only standard Xbox mapping. Press New to make an editable copy.";
         } else if (cur >= kZoneMain && cur < kZoneMain + kTiles) {
             desc = kMainDescriptions[cur - kZoneMain];
+        } else if (int side = trigger_side_for_cursor(cur); side >= 0) {
+            desc = std::wstring(side == 0 ? L"Left" : L"Right") +
+                   L" trigger. A switches between the analog Xbox trigger and Buttons "
+                   L"(bindings A, B and C at their own pull depths). X opens its settings.";
         } else {
             desc = L"Press A to choose a new binding for this button.";
         }
@@ -1686,8 +1907,7 @@ void QuickAccessOverlay::draw_name_entry(float y) {
     field.radiusX = 6.0f; field.radiusY = 6.0f;
     rt_->FillRoundedRectangle(field, br_slider_bg_);
 
-    // on_paint holds tiles_mtx_ while calling this, so read name_text_ directly.
-    std::wstring shown = name_text_;
+    std::wstring shown = name_queue_.text();
     shown += L"|";  // caret
     D2D1_RECT_F tr = D2D1::RectF(fx + 12.0f, top, right - 12.0f, top + h);
     rt_->DrawText(shown.c_str(), static_cast<UINT32>(shown.size()), action_fmt_, tr, br_text_,
@@ -1719,7 +1939,9 @@ void QuickAccessOverlay::draw_submenu() {
     // Header: "TileName > ModeName"
     // Called under tiles_mtx_ from on_paint
     std::wstring header;
-    if (submenu_tile_ >= 0 && submenu_tile_ < kTiles)
+    if (submenu_trigger_)
+        header = sub_header_;
+    else if (submenu_tile_ >= 0 && submenu_tile_ < kTiles)
         header = tiles_[submenu_tile_].label + L" > " + tiles_[submenu_tile_].mode_text;
 
     float hx = sx + kPad;
@@ -1926,16 +2148,23 @@ void QuickAccessOverlay::open_picker() {
     open_picker_for(profile.buttons[static_cast<int>(bid)]);
 }
 
-void QuickAccessOverlay::open_picker_submenu(RemapDest dest, int pad_tile, int sector) {
+void QuickAccessOverlay::open_picker_submenu(RemapDest dest, int target, int index) {
     auto profile = config_.get_profile();
-    auto ti = static_cast<MainTileId>(pad_tile);
-    const auto& t = (ti == LPad) ? profile.left_touchpad : profile.right_touchpad;
-    config::ButtonAction current =
-        (dest == RemapDest::ClickAction) ? t.click_action : t.radial_keys[sector];
+    config::ButtonAction current{config::ActionType::None, 0};
+    if (dest == RemapDest::TriggerBinding) {
+        if (index < 0 || index >= static_cast<int>(config::kTriggerBindings)) return;
+        const auto& t = (target == 0) ? profile.left_trigger : profile.right_trigger;
+        current = t.bindings[static_cast<size_t>(index)].action;
+        picker_side_.store(target, std::memory_order_relaxed);
+    } else {
+        auto ti = static_cast<MainTileId>(target);
+        const auto& t = (ti == LPad) ? profile.left_touchpad : profile.right_touchpad;
+        current = (dest == RemapDest::ClickAction) ? t.click_action : t.radial_keys[index];
+        picker_pad_.store(target, std::memory_order_relaxed);
+    }
 
     picker_dest_.store(static_cast<int>(dest), std::memory_order_relaxed);
-    picker_pad_.store(pad_tile, std::memory_order_relaxed);
-    picker_sector_.store(sector, std::memory_order_relaxed);
+    picker_sector_.store(index, std::memory_order_relaxed);
     picker_from_submenu_.store(true, std::memory_order_relaxed);
 
     // Collapse the submenu panel so the picker renders centered at the base width;
@@ -2017,6 +2246,12 @@ void QuickAccessOverlay::picker_write(const config::ButtonAction& a) {
         int bid = picker_bid_.load(std::memory_order_relaxed);
         if (bid < 0) return;
         profile.buttons[bid] = a;
+    } else if (dest == RemapDest::TriggerBinding) {
+        int b = picker_sector_.load(std::memory_order_relaxed);
+        if (b < 0 || b >= static_cast<int>(config::kTriggerBindings)) return;
+        auto& t = (picker_side_.load(std::memory_order_relaxed) == 0) ? profile.left_trigger
+                                                                       : profile.right_trigger;
+        t.bindings[static_cast<size_t>(b)].action = a;
     } else {
         auto ti = static_cast<MainTileId>(picker_pad_.load(std::memory_order_relaxed));
         auto& t = (ti == LPad) ? profile.left_touchpad : profile.right_touchpad;
@@ -2060,9 +2295,7 @@ void QuickAccessOverlay::close_picker() {
         auto profile = config_.get_profile();
         {
             std::lock_guard lock(tiles_mtx_);
-            build_sub_params(submenu_tile_, profile);
-            if (sub_cursor_ >= static_cast<int>(sub_params_.size()))
-                sub_cursor_ = sub_params_.empty() ? 0 : static_cast<int>(sub_params_.size()) - 1;
+            rebuild_submenu(profile);   // the main tile's or the trigger's, cursor kept
         }
         submenu_open_.store(true, std::memory_order_relaxed);
         PostMessage(hwnd(), WM_OVR_RESIZE, kTotalW + kSubmenuW, 0);

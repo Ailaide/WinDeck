@@ -26,9 +26,11 @@ public:
 
     void set_name(const char* name) { name_ = name; }
     // Set reference to Neptune device for haptic feedback on click.
-    void set_haptic_device(windeck::neptune::NeptuneDevice* device, uint8_t side) {
+    void set_haptic_device(windeck::neptune::NeptuneDevice* device,
+                           windeck::neptune::HapticSide side) {
         haptic_device_ = device;
-        haptic_side_ = side;
+        haptic_motor_ = side;
+        haptic_side_ = (side == windeck::neptune::HapticSide::Left) ? 1 : 0;
     }
     void set_overlay(windeck::overlay::RadialOverlay* overlay) { overlay_ = overlay; }
 
@@ -101,7 +103,8 @@ private:
     windeck::overlay::RadialOverlay* overlay_ = nullptr;
     const char* name_ = "pad";
     windeck::neptune::NeptuneDevice* haptic_device_ = nullptr;
-    uint8_t haptic_side_ = 0;  // 0=right, 1=left
+    windeck::neptune::HapticSide haptic_motor_ = windeck::neptune::HapticSide::Right;
+    uint8_t haptic_side_ = 0;  // radial overlay side: 0=right, 1=left
 
     void click_haptic();
     void edge_entry_haptic();

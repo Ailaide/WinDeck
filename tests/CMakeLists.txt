@@ -6,6 +6,8 @@ add_executable(windeck_tests
     inertia_test.cpp
     profile_json_test.cpp
     hold_ownership_test.cpp
+    trigger_mapper_test.cpp
+    name_entry_queue_test.cpp
 )
 
 target_link_libraries(windeck_tests PRIVATE

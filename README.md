@@ -15,6 +15,7 @@ WinDeck reads every Neptune input over HID and re-exposes it — as an Xbox 360 
 - **Play any game with a controller Windows actually recognizes.** Every button, stick, and trigger just works, and in-game rumble comes through the Deck's motors.
 - **Use the whole Deck, not just the face buttons.** The touchpads, gyroscope, and back paddles (L4/L5/R4/R5) become real, usable inputs instead of dead hardware.
 - **Make any control do what you want.** Bind buttons, sticks, and pads to gamepad buttons, keyboard keys, or mouse actions — whatever the game or app expects.
+- **Turn the triggers into buttons.** Each trigger can stay an analog Xbox trigger or fire up to three bindings at their own pull depths — for example aim at a light pull and fire at a full pull — with a click from the motor on that side.
 - **Run the desktop and keyboard-only games too.** Move the cursor with a touchpad or by tilting the Deck, walk with WASD or arrow keys from the sticks and D-pad, and scroll with a touchpad.
 - **Reach your shortcuts in a thumb-flick.** An on-screen radial menu puts eight actions one gesture away.
 - **One setup per game.** Save profiles and switch between them in a tap.
@@ -49,6 +50,7 @@ WinDeck reads every Neptune input over HID and re-exposes it — as an Xbox 360 
 Profiles are JSON files describing the full mapping and mode configuration. They live in the `profiles` folder next to `windeck.exe` and can be created, switched, and deleted from the Quick Access Menu.
 
 - **Default** is built in and always available; it cannot be edited or overwritten.
+- **Triggers:** select **LT** or **RT** in the menu's top row. **A** switches between the analog Xbox trigger and Buttons; **X** opens its settings. In Buttons mode each of bindings A, B and C has an action (key, mouse button, wheel tick or Xbox button), a pull depth from 10% to 100%, a mode — **Hold** keeps the action pressed while the trigger is past the depth, **Immediate** taps it once — and a haptic click (None, Low or High). After a profile change or closing the menu, a trigger that is still pulled does nothing until you let it go.
 - Example profiles ship in [`resources/profiles/`](resources/profiles/); copy one into your `profiles` folder to try it. The release archive already contains them in its `profiles` folder.
 
 > **Note:** the profile JSON format is not yet stable and may change between versions without migration — recreate old profiles if they stop loading.

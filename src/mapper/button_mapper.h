@@ -32,6 +32,15 @@ public:
     // Hold nothing any more (profile change, menu open, shutdown).
     void release_all(windeck::output::SyntheticInput& synth);
 
+    // Take these buttons as already seen without emitting anything: a button
+    // held through the menu keeps its hold on the next map() but is not a new
+    // press, so it fires no wheel tick or system event.
+    void resync(uint32_t neptune_buttons, uint32_t neptune_buttons_ext) {
+        prev_buttons_ = neptune_buttons;
+        prev_buttons_ext_ = neptune_buttons_ext;
+        first_frame_ = false;
+    }
+
 private:
     // Current button actions
     std::array<config::ButtonAction, static_cast<size_t>(config::ButtonId::Count)> actions_;

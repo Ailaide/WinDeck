@@ -3,6 +3,8 @@
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <algorithm>
+#include <cmath>
+#include <stdexcept>
 #include <windows.h>
 
 using json = nlohmann::json;
@@ -33,11 +35,70 @@ static json action_to_json(const ButtonAction& a) {
     return {{"type", action_type_str(a.type)}, {"code", a.code}};
 }
 
+// --- Strict readers: a value of the wrong JSON type rejects the whole profile ---
+
+[[noreturn]] static void reject(const std::string& what) {
+    throw std::invalid_argument("profile: " + what);
+}
+
+static const json& require_object(const json& j, const char* what) {
+    if (!j.is_object()) reject(std::string(what) + " must be an object");
+    return j;
+}
+
+static float number_or(const json& j, const char* key, float def) {
+    if (!j.contains(key)) return def;
+    const json& v = j[key];
+    if (!v.is_number()) reject(std::string(key) + " must be a number");
+    return v.get<float>();
+}
+
+static std::string string_or(const json& j, const char* key, const char* def) {
+    if (!j.contains(key)) return def;
+    const json& v = j[key];
+    if (!v.is_string()) reject(std::string(key) + " must be a string");
+    return v.get<std::string>();
+}
+
+// Every Xbox 360 button bit (D-pad, Start, Back, thumbs, shoulders, Guide, A/B/X/Y);
+// 0x0800 is reserved.
+static constexpr uint32_t kXboxButtonMask = 0xF7FF;
+
+// The action a JSON object describes, or None when it cannot produce output.
+// The code is checked as the JSON number it is, before it is narrowed to 16 bits,
+// so an out-of-range value can never wrap round to a different key.
 static ButtonAction action_from_json(const json& j) {
-    ButtonAction a;
-    a.type = parse_action_type(j.value("type", "none"));
-    a.code = j.value("code", (uint16_t)0);
-    return a;
+    require_object(j, "action");
+    const ActionType type = parse_action_type(string_or(j, "type", "none"));
+
+    int64_t code = 0;
+    if (j.contains("code")) {
+        const json& v = j["code"];
+        if (!v.is_number()) reject("code must be a number");
+        if (v.is_number_float()) {
+            double d = v.get<double>();
+            if (d != std::floor(d) || d < 0.0 || d > 65535.0) return {ActionType::None, 0};
+            code = static_cast<int64_t>(d);
+        } else if (v.is_number_unsigned()) {
+            uint64_t u = v.get<uint64_t>();
+            if (u > 65535) return {ActionType::None, 0};
+            code = static_cast<int64_t>(u);
+        } else {
+            code = v.get<int64_t>();
+            if (code < 0 || code > 65535) return {ActionType::None, 0};
+        }
+    }
+
+    bool valid = false;
+    switch (type) {
+        case ActionType::Keyboard:    valid = code >= 1 && code <= 255; break;
+        case ActionType::MouseButton: valid = code <= 2; break;
+        case ActionType::MouseScroll: valid = code <= 1; break;
+        case ActionType::XboxButton:  valid = code != 0 && (code & ~int64_t{kXboxButtonMask}) == 0; break;
+        case ActionType::None:        valid = false; break;
+    }
+    if (!valid) return {ActionType::None, 0};
+    return {type, static_cast<uint16_t>(code)};
 }
 
 static const char* stick_mode_str(StickMode m) {
@@ -122,6 +183,41 @@ static TouchpadAccelerationPreset parse_touchpad_accel(const std::string& s) {
     return TouchpadAccelerationPreset::Normal;
 }
 
+static const char* trigger_mode_str(TriggerMode m) {
+    return m == TriggerMode::Buttons ? "buttons" : "xbox";
+}
+
+static TriggerMode parse_trigger_mode(const std::string& s) {
+    if (s == "buttons") return TriggerMode::Buttons;
+    return TriggerMode::Xbox;
+}
+
+static const char* binding_mode_str(BindingMode m) {
+    return m == BindingMode::Immediate ? "immediate" : "hold";
+}
+
+static BindingMode parse_binding_mode(const std::string& s) {
+    if (s == "immediate") return BindingMode::Immediate;
+    return BindingMode::Hold;
+}
+
+static const char* click_str(ClickStrength c) {
+    switch (c) {
+        case ClickStrength::None: return "none";
+        case ClickStrength::High: return "high";
+        default:                  return "low";
+    }
+}
+
+static ClickStrength parse_click(const std::string& s) {
+    if (s == "none") return ClickStrength::None;
+    if (s == "high") return ClickStrength::High;
+    return ClickStrength::Low;
+}
+
+// JSON keys of the three trigger bindings.
+static constexpr const char* kBindingKeys[kTriggerBindings] = {"a", "b", "c"};
+
 static const char* gyro_mode_str(GyroMode m) {
     switch (m) {
         case GyroMode::Mouse: return "mouse";
@@ -182,13 +278,19 @@ std::string profile_to_json(const Profile& p) {
     j["left_stick"] = stick_json(p.left_stick);
     j["right_stick"] = stick_json(p.right_stick);
 
-    // Triggers
+    // Triggers: mode, dead zone and all three bindings, whatever the mode.
     auto trig_json = [](const TriggerConfig& t) -> json {
-        json tj = {{"threshold", t.threshold}};
-        if (t.has_button) {
-            tj["button"] = {
-                {"threshold", t.button_threshold},
-                {"action", action_to_json(t.button_action)}
+        json tj = {
+            {"mode", trigger_mode_str(t.mode)},
+            {"deadzone", t.deadzone}
+        };
+        for (size_t i = 0; i < kTriggerBindings; i++) {
+            const auto& b = t.bindings[i];
+            tj[kBindingKeys[i]] = {
+                {"pull", b.pull},
+                {"action", action_to_json(b.action)},
+                {"mode", binding_mode_str(b.mode)},
+                {"click", click_str(b.click)}
             };
         }
         return tj;
@@ -268,15 +370,23 @@ Profile profile_from_json(const std::string& json_str) {
     if (j.contains("left_stick"))  parse_stick(j["left_stick"], p.left_stick);
     if (j.contains("right_stick")) parse_stick(j["right_stick"], p.right_stick);
 
-    // Triggers
+    // Triggers. Missing values keep the defaults; the old "threshold" and
+    // "button" keys are ignored (no migration before 1.0).
     auto parse_trig = [](const json& tj, TriggerConfig& t) {
-        t.threshold = std::clamp(tj.value("threshold", 0.02f), 0.0f, 1.0f);
-        if (tj.contains("button")) {
-            t.has_button = true;
-            t.button_threshold = std::clamp(tj["button"].value("threshold", 0.8f), 0.0f, 1.0f);
-            if (tj["button"].contains("action")) {
-                t.button_action = action_from_json(tj["button"]["action"]);
-            }
+        require_object(tj, "trigger");
+        const TriggerConfig defaults;
+        t.mode = parse_trigger_mode(string_or(tj, "mode", "xbox"));
+        t.deadzone = std::clamp(number_or(tj, "deadzone", defaults.deadzone),
+                                0.0f, kTriggerDeadzoneMax);
+        for (size_t i = 0; i < kTriggerBindings; i++) {
+            auto& b = t.bindings[i];
+            b = defaults.bindings[i];
+            if (!tj.contains(kBindingKeys[i])) continue;
+            const json& bj = require_object(tj[kBindingKeys[i]], "trigger binding");
+            b.pull = std::clamp(number_or(bj, "pull", b.pull), kTriggerPullMin, kTriggerPullMax);
+            if (bj.contains("action")) b.action = action_from_json(bj["action"]);
+            b.mode = parse_binding_mode(string_or(bj, "mode", "hold"));
+            b.click = parse_click(string_or(bj, "click", "low"));
         }
     };
     if (j.contains("left_trigger"))  parse_trig(j["left_trigger"], p.left_trigger);
