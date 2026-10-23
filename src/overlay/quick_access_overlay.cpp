@@ -683,8 +683,10 @@ void QuickAccessOverlay::begin_name_entry() {
         name_text_.clear();
     }
     s_name_target.store(this, std::memory_order_relaxed);
+    // Queue show() before WM_QAM_KBD_ON installs the hook: the hook can end the
+    // entry on the overlay thread, and that hide() must come after this show().
+    if (touch_kbd_) touch_kbd_->show();
     PostMessageW(hwnd(), WM_QAM_KBD_ON, 0, 0);
-    if (open_kbd_) open_kbd_();   // open the Windows touch keyboard
     invalidate();
 }
 
@@ -692,6 +694,7 @@ void QuickAccessOverlay::end_name_entry(bool commit) {
     if (!name_entry_.exchange(false, std::memory_order_relaxed)) return;
     s_name_target.store(nullptr, std::memory_order_relaxed);
     PostMessageW(hwnd(), WM_QAM_KBD_OFF, 0, 0);
+    if (touch_kbd_) touch_kbd_->hide();
 
     if (commit) {
         std::wstring wname;

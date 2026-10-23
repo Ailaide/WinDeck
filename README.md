@@ -19,6 +19,7 @@ WinDeck reads every Neptune input over HID and re-exposes it — as an Xbox 360 
 - **Reach your shortcuts in a thumb-flick.** An on-screen radial menu puts eight actions one gesture away.
 - **One setup per game.** Save profiles and switch between them in a tap.
 - **Tweak without leaving the game.** The Steam button opens an on-screen menu to remap controls and change profiles on the fly.
+- **Type without a physical keyboard.** The Quick Access button shows or hides the Windows touch keyboard.
 - **Stays out of your way.** Runs quietly in the background, needs no administrator rights, and stays light on the Deck's hardware.
 
 ## Requirements
@@ -40,7 +41,8 @@ WinDeck reads every Neptune input over HID and re-exposes it — as an Xbox 360 
 1. Run `windeck.exe`. It reads the Neptune controller, creates the virtual Xbox 360 pad, and logs to its console window and to `windeck.log` next to the executable. Only one instance can run at a time.
 2. Play — games now see a standard Xbox 360 controller.
 3. Press the **Steam button** to open the Quick Access Menu overlay and configure controls or switch profiles.
-4. Close the console window (or press **Ctrl+C** in it) to stop. WinDeck restores the controller's default (lizard mode) settings on exit.
+4. Press the **Quick Access button** (**…**) to show or hide the Windows touch keyboard.
+5. Close the console window (or press **Ctrl+C** in it) to stop. WinDeck restores the controller's default (lizard mode) settings on exit.
 
 ## Configuration & profiles
 
@@ -55,7 +57,7 @@ Profiles are JSON files describing the full mapping and mode configuration. They
 
 - **No input while Steam is running.** Steam takes over the Deck controller and WinDeck receives nothing. Exit Steam completely (tray icon → Exit) before starting WinDeck.
 - **Some games see two controllers.** Hiding the physical controller from other apps (HidHide integration) is not enabled yet, so games that read the Deck controller directly may see it alongside the virtual Xbox pad.
-- **The touch keyboard does not open.** The Quick Access Menu opens the Windows touch keyboard through its taskbar button. Enable it in *Settings → Personalization → Taskbar → Touch keyboard → Always*.
+- **The touch keyboard does not appear.** WinDeck shows and hides it through the Windows touch keyboard host (`TabTip.exe`), which Windows starts with the *Text Input Management Service*. If it does not appear, look for a touch keyboard warning in `windeck.log`.
 - **The controller has no mouse/keyboard emulation after WinDeck crashed.** Firmware settings persist until they are restored. Run `restore_neptune.exe` (included in the release and built with the project) to reset the controller to its defaults.
 - **Recovery scripts** in [`tools/`](tools/):
   - `unhide_neptune.bat` / `unhide_neptune.ps1`, `hidhide_reset.bat` — make the controller visible again if HidHide (installed by WinDeck or another tool) is hiding it.

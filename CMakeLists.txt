@@ -61,6 +61,7 @@ add_executable(windeck
     src/main.cpp
     src/neptune/neptune_device.cpp
     src/output/virtual_xbox.cpp
+    src/output/touch_keyboard.cpp
     src/mapper/mapper.cpp
     src/mapper/touchpad_mapper.cpp
     src/driver/driver_manager.cpp
@@ -89,6 +90,7 @@ target_link_libraries(windeck PRIVATE
     setupapi
     urlmon
     bcrypt
+    ole32
     d2d1
     dwrite
 )

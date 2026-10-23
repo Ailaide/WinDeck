@@ -1,13 +1,11 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
-#include <objbase.h>
-#include <UIAutomation.h>
-#pragma comment(lib, "ole32.lib")
 
 #include "neptune/neptune_device.h"
 #include "output/virtual_xbox.h"
 #include "output/synthetic_input.h"
+#include "output/touch_keyboard.h"
 #include "mapper/mapper.h"
 #include "config/config.h"
 #include "hidhide/hidhide_client.h"
@@ -54,96 +52,12 @@ static BOOL WINAPI console_handler(DWORD event) {
     return FALSE;
 }
 
-// Open the Windows touch keyboard via its taskbar button (UI Automation) — the
-// method that reliably works on Win11. It only opens the keyboard (the toggle's
-// close side is unreliable on Win11, and the user closes it themselves).
-static void open_touch_keyboard() {
-    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-
-    IUIAutomation* uia = nullptr;
-    HRESULT hr = CoCreateInstance(__uuidof(CUIAutomation), nullptr,
-        CLSCTX_INPROC_SERVER, __uuidof(IUIAutomation), reinterpret_cast<void**>(&uia));
-    if (FAILED(hr) || !uia) {
-        spdlog::warn("Failed to create UIAutomation: {:#x}", static_cast<unsigned>(hr));
-        CoUninitialize();
-        return;
-    }
-
-    HWND tray_wnd = FindWindowW(L"Shell_TrayWnd", nullptr);
-    if (!tray_wnd) {
-        spdlog::warn("Shell_TrayWnd not found");
-        uia->Release();
-        CoUninitialize();
-        return;
-    }
-
-    IUIAutomationElement* tray_elem = nullptr;
-    hr = uia->ElementFromHandle(tray_wnd, &tray_elem);
-    if (FAILED(hr) || !tray_elem) {
-        spdlog::warn("ElementFromHandle failed: {:#x}", static_cast<unsigned>(hr));
-        uia->Release();
-        CoUninitialize();
-        return;
-    }
-
-    // Touch keyboard tray button, located by its language-independent AutomationId.
-    IUIAutomationCondition* cond_id = nullptr;
-    VARIANT var_id;
-    var_id.vt = VT_BSTR;
-    var_id.bstrVal = SysAllocString(L"TipBandButtonID");
-    uia->CreatePropertyCondition(UIA_AutomationIdPropertyId, var_id, &cond_id);
-    SysFreeString(var_id.bstrVal);
-
-    IUIAutomationElement* kbd_btn = nullptr;
-    if (cond_id) {
-        hr = tray_elem->FindFirst(TreeScope_Descendants, cond_id, &kbd_btn);
-        cond_id->Release();
-    }
-
-    if (kbd_btn) {
-        // Press the button (TogglePattern, else Invoke) to open the keyboard.
-        IUIAutomationTogglePattern* toggle = nullptr;
-        HRESULT tr = kbd_btn->GetCurrentPatternAs(UIA_TogglePatternId,
-            __uuidof(IUIAutomationTogglePattern), reinterpret_cast<void**>(&toggle));
-        if (SUCCEEDED(tr) && toggle) {
-            toggle->Toggle();
-            toggle->Release();
-        } else {
-            IUIAutomationInvokePattern* invoke = nullptr;
-            tr = kbd_btn->GetCurrentPatternAs(UIA_InvokePatternId,
-                __uuidof(IUIAutomationInvokePattern), reinterpret_cast<void**>(&invoke));
-            if (SUCCEEDED(tr) && invoke) { invoke->Invoke(); invoke->Release(); }
-            else spdlog::warn("Touch keyboard button exposes no Toggle/Invoke pattern");
-        }
-        kbd_btn->Release();
-    } else {
-        spdlog::warn("Touch keyboard button not found in taskbar. "
-            "Enable it: Settings > Personalization > Taskbar > Touch keyboard");
-    }
-
-    tray_elem->Release();
-    uia->Release();
-    CoUninitialize();
-}
-
-// Open the touch keyboard on a detached thread (COM/UIA), guarded so only one
-// request is in flight at a time. Used by the Quick Access button and the
-// profile name-entry field; the user closes the keyboard themselves.
-static void spawn_touch_keyboard() {
-    static std::atomic<bool> in_flight{false};
-    if (!in_flight.exchange(true, std::memory_order_acq_rel)) {
-        std::thread([] {
-            open_touch_keyboard();
-            in_flight.store(false, std::memory_order_release);
-        }).detach();
-    }
-}
-
 static void input_loop(windeck::neptune::NeptuneDevice& device,
                         windeck::output::VirtualXbox& xbox,
                         windeck::mapper::Mapper& mapper,
                         windeck::output::SyntheticInput& synth,
                         windeck::overlay::QuickAccessOverlay& qam,
+                        windeck::output::TouchKeyboard& touch_keyboard,
                         windeck::config::Config& config) {
 #ifdef _WIN32
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
@@ -239,10 +153,10 @@ static void input_loop(windeck::neptune::NeptuneDevice& device,
                     prev_nav_btn = input.buttons; // sync edge detection
                 }
 
-                // Quick Access button -> touch keyboard
+                // Quick Access button -> show or hide the touch keyboard
                 if (result.sys_events.quick_access_pressed) {
-                    spdlog::info("Quick Access button pressed, opening touch keyboard");
-                    spawn_touch_keyboard();
+                    spdlog::info("Quick Access button pressed, toggling touch keyboard");
+                    touch_keyboard.toggle();
                 }
             }
         } else if (read_result == 0) {
@@ -378,8 +292,11 @@ int main() {
     mapper.apply_profile(profile, synth);
     spdlog::info("Profile '{}' applied", profile.name);
 
+    // Declared before qam so it outlives the overlay that posts requests to it.
+    windeck::output::TouchKeyboard touch_keyboard;
+
     windeck::overlay::QuickAccessOverlay qam(config, mapper, synth);
-    qam.set_keyboard_opener(spawn_touch_keyboard);
+    qam.set_touch_keyboard(&touch_keyboard);
 
     // Run input loop
     std::thread input_thread(input_loop,
@@ -388,6 +305,7 @@ int main() {
                               std::ref(mapper),
                               std::ref(synth),
                               std::ref(qam),
+                              std::ref(touch_keyboard),
                               std::ref(config));
 
     spdlog::info("WinDeck running. Press Ctrl+C to stop.");
@@ -401,6 +319,9 @@ int main() {
     spdlog::default_logger()->flush();
 
     input_thread.join();
+    // Close the touch keyboard if a profile name was being typed. The input
+    // thread has stopped, so nothing else changes the name entry now.
+    qam.cancel_name_entry();
     xbox.disconnect();
     g_neptune = nullptr;
     neptune.close();

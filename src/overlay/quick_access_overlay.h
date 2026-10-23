@@ -4,12 +4,12 @@
 #include "config/config.h"
 #include "mapper/mapper.h"
 #include "output/synthetic_input.h"
+#include "output/touch_keyboard.h"
 #include <array>
 #include <string>
 #include <atomic>
 #include <mutex>
 #include <vector>
-#include <functional>
 
 namespace windeck::overlay {
 
@@ -109,8 +109,8 @@ public:
     void close_dropdown();
     bool is_name_entry() const { return name_entry_.load(std::memory_order_relaxed); }
     void cancel_name_entry();
-    // opener() opens the touch keyboard (the user closes it themselves).
-    void set_keyboard_opener(std::function<void()> opener) { open_kbd_ = std::move(opener); }
+    // Profile name entry shows the touch keyboard and hides it when it ends.
+    void set_touch_keyboard(windeck::output::TouchKeyboard* keyboard) { touch_kbd_ = keyboard; }
     void update_tiles(const config::Profile& profile);
 
 private:
@@ -261,7 +261,7 @@ private:
     // Profile name entry (New)
     std::atomic<bool> name_entry_{false};
     std::wstring name_text_;                // guarded by tiles_mtx_
-    std::function<void()> open_kbd_;        // opens the Windows touch keyboard
+    windeck::output::TouchKeyboard* touch_kbd_ = nullptr;  // Windows touch keyboard
     HHOOK kbd_hook_ = nullptr;              // low-level keyboard hook (overlay thread)
 
     windeck::config::Config&         config_;
