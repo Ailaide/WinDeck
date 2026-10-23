@@ -13,8 +13,8 @@ body:
     id: windeck-version
     attributes:
       label: WinDeck version
-      description: The release you are running. The first line of `windeck.log` shows it (`WinDeck v0.2.1 starting`). For a source build, give the commit.
-      placeholder: "0.2.1"
+      description: The release you are running. The first line of `windeck.log` shows it (`WinDeck v0.3.0 starting`). For a source build, give the commit.
+      placeholder: "0.3.0"
     validations:
       required: true
 
