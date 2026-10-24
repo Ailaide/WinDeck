@@ -36,6 +36,12 @@ Unit tests cover the math and the profile format, not the device. Anything that 
 
 Say in your pull request what you tested on the Deck and what you could not.
 
+## Privacy when contributing
+
+Issues, pull requests, attachments, and Git commit metadata are public. Before sharing a log, profile, or screenshot, remove personal names, Windows usernames, home-folder paths, device identifiers, and private network addresses. Keep the error messages and mapping settings needed to reproduce the problem.
+
+Use your GitHub username as your Git author name and a GitHub-provided `noreply` email if you want to keep your name and personal email private. Check `git config --get user.name` and `git config --get user.email` before committing; GitHub's [email privacy settings](https://github.com/settings/emails) show the correct `noreply` address for your account. Do not commit credentials, private keys, local profiles, or personal build and deployment settings.
+
 ## Coding conventions
 
 - **C++20**, built with MSVC. Keep it compiling with the presets in `CMakePresets.json`.

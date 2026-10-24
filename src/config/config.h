@@ -7,7 +7,7 @@
 
 namespace windeck::config {
 
-// Manages profiles: load/save JSON, hot reload, thread-safe access.
+// Manages profiles: load/save JSON, active-profile persistence, thread-safe access.
 class Config {
 public:
     Config();

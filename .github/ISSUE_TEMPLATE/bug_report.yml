@@ -74,7 +74,7 @@ body:
     id: log
     attributes:
       label: windeck.log
-      description: Attach `windeck.log` from the folder that contains `windeck.exe` by dragging the file into this box. Please reproduce the problem first so the log covers it.
+      description: Reproduce the problem, then attach `windeck.log` from the folder that contains `windeck.exe`. Reports are public; remove personal names, usernames, home-folder paths, device identifiers, and private network addresses before uploading.
     validations:
       required: true
 
@@ -82,7 +82,7 @@ body:
     id: profile
     attributes:
       label: Profile (optional)
-      description: If the problem depends on your mapping, attach the profile JSON from the `profiles` folder next to `windeck.exe`, or name the example profile you used.
+      description: If the problem depends on your mapping, attach the profile JSON from the `profiles` folder next to `windeck.exe`, or name the example profile you used. Remove any personal details from the profile name and contents first.
 
   - type: textarea
     id: context
